@@ -1,18 +1,22 @@
 # core/quota_guard.py
 
 from datetime import date
+
 from django.core.cache import cache
+from django.db.models import F
+from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied
+
 from billing.models import UsageCounter
 
 
 LIMIT_FIELD_MAP = {
-    'search'          : 'search_limit',
-    'backlink_search' : 'backlink_search_limit',
-    'ai_pitch'        : 'ai_pitch_limit',
-    'email_send'      : 'email_send_limit',
-    'ai_chat'         : 'ai_chat_limit',
-    'bulk_search'     : 'bulk_search_limit',
+    "search": "search_limit",
+    "backlink_search": "backlink_search_limit",
+    "ai_pitch": "ai_pitch_limit",
+    "email_send": "email_send_limit",
+    "ai_chat": "ai_chat_limit",
+    "bulk_search": "bulk_search_limit",
 }
 
 
@@ -35,10 +39,10 @@ def _get_plan_limit(user, action: str) -> int:
 def _get_counter(user, action: str) -> UsageCounter:
     """Fetches or creates UsageCounter for current period."""
     counter, _ = UsageCounter.objects.get_or_create(
-        user       = user,
-        action     = action,
-        reset_date = get_period_start(),
-        defaults   = {'count': 0, 'bonus': 0}
+        user=user,
+        action=action,
+        reset_date=get_period_start(),
+        defaults={"count": 0, "bonus": 0},
     )
     return counter
 
@@ -60,6 +64,28 @@ def get_effective_limit(user, action: str) -> int:
     return base_limit + counter.bonus
 
 
+def get_remaining_quota(user, action: str) -> int:
+    """
+    Returns the exact number of remaining credits for an action.
+    Returns 999_999 for unlimited plans.
+    """
+    base_limit = _get_plan_limit(user, action)
+    if base_limit == -1:
+        return 999_999
+
+    counter = _get_counter(user, action)
+    effective_limit = base_limit + counter.bonus
+    
+    period_start = get_period_start()
+    redis_key = _get_redis_key(user.id, action, period_start)
+    cached_count = cache.get(redis_key)
+    
+    if cached_count is None:
+        cached_count = counter.count
+        
+    return max(0, effective_limit - cached_count)
+
+
 def check(user, action: str) -> None:
     """
     Checks if user has remaining quota.
@@ -70,37 +96,42 @@ def check(user, action: str) -> None:
     if base_limit == -1:
         return  # unlimited
 
+    # Single DB call — reused for both count and bonus
+    counter = _get_counter(user, action)
     period_start = get_period_start()
-    redis_key    = _get_redis_key(user.id, action, period_start)
+    redis_key = _get_redis_key(user.id, action, period_start)
     cached_count = cache.get(redis_key)
 
     if cached_count is None:
-        counter      = _get_counter(user, action)
         cached_count = counter.count
         cache.set(redis_key, cached_count, timeout=_seconds_until_month_end())
 
-    effective_limit = base_limit + _get_counter(user, action).bonus
+    effective_limit = base_limit + counter.bonus
 
     if cached_count >= effective_limit:
-        raise PermissionDenied({
-            'error'      : 'Quota limit reached.',
-            'action'     : action,
-            'limit'      : effective_limit,
-            'upgrade_url': '/api/billing/checkout/',
-        })
+        raise PermissionDenied(
+            {
+                "error": "Quota limit reached.",
+                "action": action,
+                "limit": effective_limit,
+                "upgrade_url": "/api/billing/checkout/",
+            }
+        )
 
 
 def increment(user, action: str) -> None:
     period_start = get_period_start()
-    redis_key    = _get_redis_key(user.id, action, period_start)
+    redis_key = _get_redis_key(user.id, action, period_start)
 
-    counter        = _get_counter(user, action)
-    counter.count += 1
-    counter.save(update_fields=['count', 'last_used'])
+    counter = _get_counter(user, action)
+    UsageCounter.objects.filter(pk=counter.pk).update(
+        count=F("count") + 1,
+        last_used=timezone.now(),
+    )
+    new_count = counter.count + 1
 
-    # Set if not exists, increment if exists
     if cache.get(redis_key) is None:
-        cache.set(redis_key, counter.count, timeout=_seconds_until_month_end())
+        cache.set(redis_key, new_count, timeout=_seconds_until_month_end())
     else:
         cache.incr(redis_key)
 
@@ -127,22 +158,23 @@ def carry_over_credits(user, old_plan, new_plan) -> None:
             continue
 
         counter, _ = UsageCounter.objects.get_or_create(
-            user       = user,
-            action     = action,
-            reset_date = period_start,
-            defaults   = {'count': 0, 'bonus': 0}
+            user=user,
+            action=action,
+            reset_date=period_start,
+            defaults={"count": 0, "bonus": 0},
         )
 
-        remaining      = max(0, (old_limit + counter.bonus) - counter.count)
+        remaining = max(0, (old_limit + counter.bonus) - counter.count)
         counter.bonus += remaining
-        counter.save(update_fields=['bonus'])
+        counter.save(update_fields=["bonus"])
 
 
 def _seconds_until_month_end() -> int:
     from datetime import datetime
     import calendar
-    today     = date.today()
-    last_day  = calendar.monthrange(today.year, today.month)[1]
+
+    today = date.today()
+    last_day = calendar.monthrange(today.year, today.month)[1]
     month_end = datetime(today.year, today.month, last_day, 23, 59, 59)
-    delta     = month_end - datetime.now()
+    delta = month_end - datetime.now()
     return max(int(delta.total_seconds()), 1)

@@ -9,29 +9,36 @@ class PlanFeatureInline(admin.TabularInline):
 
 @admin.register(Plan)
 class PlanAdmin(admin.ModelAdmin):
-    list_display = ('name', 'price_usd', 'stripe_price_id', 'search_limit', 'ai_pitch_limit', 'email_send_limit')
-    inlines      = [PlanFeatureInline]
+    list_display = (
+        "name",
+        "price_usd",
+        "stripe_price_id",
+        "search_limit",
+        "ai_pitch_limit",
+        "email_send_limit",
+    )
+    inlines = [PlanFeatureInline]
 
 
 @admin.register(PlanFeature)
 class PlanFeatureAdmin(admin.ModelAdmin):
-    list_display = ('plan', 'feature', 'is_enabled')
-    list_filter  = ('plan', 'is_enabled')
+    list_display = ("plan", "feature", "is_enabled")
+    list_filter = ("plan", "is_enabled")
 
 
 @admin.register(UserSubscription)
 class UserSubscriptionAdmin(admin.ModelAdmin):
-    list_display = ('user', 'plan', 'status', 'current_period_end', 'updated_at')
-    list_filter  = ('status', 'plan')
+    list_display = ("user", "plan", "status", "current_period_end", "updated_at")
+    list_filter = ("status", "plan")
 
 
 @admin.register(UsageCounter)
 class UsageCounterAdmin(admin.ModelAdmin):
-    list_display = ('user', 'action', 'count', 'reset_date', 'last_used')
-    list_filter  = ('action',)
+    list_display = ("user", "action", "count", "reset_date", "last_used")
+    list_filter = ("action",)
 
 
 @admin.register(PaymentHistory)
 class PaymentHistoryAdmin(admin.ModelAdmin):
-    list_display = ('user', 'amount', 'currency', 'status', 'paid_at', 'created_at')
-    list_filter  = ('status', 'currency')
+    list_display = ("user", "amount", "currency", "status", "paid_at", "created_at")
+    list_filter = ("status", "currency")

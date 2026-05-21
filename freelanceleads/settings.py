@@ -1,7 +1,11 @@
 from datetime import timedelta
 from dotenv import load_dotenv
+from datetime import timedelta
+
 from pathlib import Path
 import os
+import dj_database_url
+
 load_dotenv(override=True)
 import ssl
 
@@ -13,7 +17,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-05b*k!^f&06f3#+%*ov#q&6-zwuh^l3^n4ws&!oevw@xp#+23-"
+SECRET_KEY = os.environ.get(
+    "DJANGO_SECRET_KEY", "django-insecure-dev-only-change-in-production"
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -30,16 +36,18 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    'rest_framework',
-    'rest_framework_simplejwt',
-    'rest_framework_simplejwt.token_blacklist',
-    'drf_spectacular',
-    'django_celery_results',
-    'accounts',
-    'billing',
-    'leads',
-    'services'
-
+    "rest_framework",
+    "rest_framework_simplejwt",
+    "rest_framework_simplejwt.token_blacklist",
+    "drf_spectacular",
+    "django_celery_results",
+    "accounts",
+    "billing",
+    "leads",
+    "services",
+    "ai_engine",
+    "pipeline",
+    "outreach",
 ]
 
 MIDDLEWARE = [
@@ -75,12 +83,25 @@ WSGI_APPLICATION = "freelanceleads.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+DATABASE_URL = os.environ.get("POSTGRES_CONNECTION_STRING")
+
+if DATABASE_URL:
+    DATABASES = {
+        "default": dj_database_url.config(
+            default=DATABASE_URL,
+            conn_max_age=600,
+            conn_health_checks=True,
+            ssl_require=True,
+        )
     }
-}
+else:
+    # Fallback to SQLite for offline development
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 
 
 # Password validation
@@ -120,59 +141,66 @@ USE_TZ = True
 STATIC_URL = "static/"
 
 
-AUTH_USER_MODEL = 'accounts.User'
+AUTH_USER_MODEL = "accounts.User"
 
 
-#Rest Framework ki configurations
+# Rest Framework ki configurations
 REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "rest_framework.authentication.SessionAuthentication"
     ),
-    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
-
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
-#JWT ki configurations
+# JWT ki configurations
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
 }
 
 
-AUTHENTICATION_BACKENDS = ['django.contrib.auth.backends.ModelBackend']
+AUTHENTICATION_BACKENDS = ["django.contrib.auth.backends.ModelBackend"]
 
 # Development — no Redis needed
 CACHES = {
-    'default': {
-        'BACKEND'  : 'django.core.cache.backends.redis.RedisCache',
-        'LOCATION' : os.environ.get('REDIS_URL'),
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": os.environ.get("REDIS_URL"),
     }
 }
 
 
-
-#stripe Configurations
-STRIPE_SECRET_KEY      = os.environ.get('STRIPE_SECRET_KEY')
-STRIPE_WEBHOOK_SECRET  = os.environ.get('STRIPE_WEBHOOK_SECRET')
-STRIPE_SUCCESS_URL     = 'http://localhost:8000/dashboard?upgrade=success'
-STRIPE_CANCEL_URL      = 'http://localhost:8000/pricing'
-
+# stripe Configurations
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET")
+STRIPE_SUCCESS_URL = "http://localhost:8000/dashboard?upgrade=success"
+STRIPE_CANCEL_URL = "http://localhost:8000/pricing"
 
 
+# serp API KEY
+SERP_API_KEY = os.environ.get("SERP_API_KEY")
 
-
-#serp API KEY
-SERP_API_KEY           = os.environ.get('SERP_API_KEY')
-
-#celery configuration
-CELERY_RESULT_BACKEND     = os.environ.get('REDIS_URL')
-CELERY_BROKER_URL         = os.environ.get('REDIS_URL')
+# celery configuration
+CELERY_RESULT_BACKEND = os.environ.get("REDIS_URL")
+CELERY_BROKER_URL = os.environ.get("REDIS_URL")
 CELERY_BROKER_USE_SSL = {
-    'ssl_cert_reqs': ssl.CERT_NONE  # ← Upstash ke liye zaroori
+    "ssl_cert_reqs": ssl.CERT_NONE,
 }
 CELERY_REDIS_BACKEND_USE_SSL = {
-    'ssl_cert_reqs': ssl.CERT_NONE
+    "ssl_cert_reqs": ssl.CERT_NONE,
 }
-CELERY_ACCEPT_CONTENT     = ['json']
-CELERY_TASK_SERIALIZER    = 'json'
-CELERY_RESULT_SERIALIZER  = 'json'
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+
+
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+
+
+
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=1),  
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=30),  
+}

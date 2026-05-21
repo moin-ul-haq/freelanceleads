@@ -7,9 +7,10 @@ class User(AbstractUser):
 
     created_at = models.DateTimeField(auto_now_add=True)
     email = models.EmailField(unique=True)
+    timezone = models.CharField(max_length=50, default="UTC")
 
-    USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = ['username']
+    USERNAME_FIELD = "email"
+    REQUIRED_FIELDS = ["username"]
 
     def __str__(self):
         return self.email
@@ -27,15 +28,17 @@ class User(AbstractUser):
         """Return the team this user belongs to, or None."""
         try:
             return self.seat.team
-        except TeamSeat.DoesNotExist:
+        except Exception:
             return None
 
 
 class Team(models.Model):
     """A workspace that groups users under a shared account."""
 
-    name       = models.CharField(max_length=100)
-    owner      = models.ForeignKey('User', on_delete=models.CASCADE, related_name='owned_teams')
+    name = models.CharField(max_length=100)
+    owner = models.ForeignKey(
+        "User", on_delete=models.CASCADE, related_name="owned_teams"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -45,11 +48,11 @@ class Team(models.Model):
 class TeamSeat(models.Model):
     """Links a user to a team with a specific role (owner / admin / member)."""
 
-    ROLE_CHOICES = [('owner', 'Owner'), ('admin', 'Admin'), ('member', 'Member')]
+    ROLE_CHOICES = [("owner", "Owner"), ("admin", "Admin"), ("member", "Member")]
 
-    team      = models.ForeignKey(Team, on_delete=models.CASCADE, related_name='seats')
-    user      = models.OneToOneField(User, on_delete=models.CASCADE, related_name='seat')
-    role      = models.CharField(max_length=10, choices=ROLE_CHOICES, default='member')
+    team = models.ForeignKey(Team, on_delete=models.CASCADE, related_name="seats")
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="seat")
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default="member")
     joined_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

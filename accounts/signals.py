@@ -20,7 +20,7 @@ def create_free_subscription(sender, instance, created, **kwargs):
     if not created:
         return
 
-    free_plan = Plan.objects.filter(name='free').first()
+    free_plan = Plan.objects.filter(name="free").first()
 
     if not free_plan:
         # Free plan not seeded in DB yet — skip silently
@@ -28,8 +28,8 @@ def create_free_subscription(sender, instance, created, **kwargs):
         return
 
     UserSubscription.objects.create(
-        user               = instance,
-        plan               = free_plan,
-        status             = 'active',
-        current_period_end = timezone.now() + relativedelta(months=1),
+        user=instance,
+        plan=free_plan,
+        status="active",
+        current_period_end=timezone.now() + relativedelta(months=1),
     )

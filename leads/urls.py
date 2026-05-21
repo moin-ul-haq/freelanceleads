@@ -9,8 +9,8 @@ from .views import (
 )
 
 urlpatterns = [
-    path('search/',              LeadSearchView.as_view()),       # POST
-    path('saved/',               SavedLeadsListView.as_view()),   # GET
-    path('<int:lead_id>/',       LeadDetailView.as_view()),       # GET
-    path('<int:lead_id>/save/',  SaveLeadView.as_view()),         # POST + DELETE
+    path("search/", LeadSearchView.as_view()),  # POST
+    path("saved/", SavedLeadsListView.as_view()),  # GET
+    path("<int:lead_id>/", LeadDetailView.as_view()),  # GET
+    path("<int:lead_id>/save/", SaveLeadView.as_view()),  # POST + DELETE
 ]

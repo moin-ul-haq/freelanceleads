@@ -1,0 +1,264 @@
+# ai_engine/views.py
+
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework import status
+
+
+
+from freelanceleads.quota_guard import check, increment
+from leads.models import Lead
+from services.ai import chat as ai_chat
+from ai_engine.pitch import generate_pitch, generate_bulk_pitches
+from ai_engine.prompts import CHAT_SYSTEM_PROMPT
+from ai_engine.serializers import (
+    GeneratePitchSerializer,
+    BulkGeneratePitchSerializer,
+    ChatSerializer,
+)
+
+
+# ─────────────────────────────────────────────────────────────
+#  Pitch Generator
+# ─────────────────────────────────────────────────────────────
+
+
+class GeneratePitchView(APIView):
+    """
+    POST /api/ai/generate-pitch/
+
+    Generates a personalized cold email pitch for a single lead.
+    Uses lead audit data to reference specific problems found.
+
+    Request:
+        {
+            "lead_id"     : 42,
+            "tone"        : "friendly",
+            "sender_name" : "Ahmad"
+        }
+
+    Response:
+        {
+            "pitch"   : "Subject: ...\n\nHi John, ...",
+            "lead_id" : 42
+        }
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = GeneratePitchSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        # Quota check
+        check(request.user, "ai_pitch")
+
+        lead_id = serializer.validated_data["lead_id"]
+        tone = serializer.validated_data["tone"]
+        sender_name = serializer.validated_data["sender_name"]
+
+        try:
+            lead = Lead.objects.get(id=lead_id)
+        except Lead.DoesNotExist:
+            return Response(
+                {"error": "Lead not found."}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            pitch = generate_pitch(lead, tone=tone, sender_name=sender_name)
+        except RuntimeError as e:
+            return Response({"error": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        # Increment quota only on success
+        increment(request.user, "ai_pitch")
+
+        return Response(
+            {
+                "pitch": pitch,
+                "lead_id": lead_id,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# ─────────────────────────────────────────────────────────────
+#  Bulk Pitch Generator
+# ─────────────────────────────────────────────────────────────
+
+
+class BulkGeneratePitchView(APIView):
+    """
+    POST /api/ai/bulk-pitch/
+
+    Generates pitches for multiple leads at once.
+    Max plan only. Runs synchronously — Celery task added later.
+
+    Request:
+        {
+            "lead_ids"    : [1, 2, 3, ...],
+            "tone"        : "professional",
+            "sender_name" : "Ahmad"
+        }
+
+    Response:
+        {
+            "results": [
+                {"lead_id": 1, "pitch": "Subject: ...", "error": null},
+                {"lead_id": 2, "pitch": null, "error": "API error"},
+            ],
+            "success_count" : 2,
+            "failed_count"  : 1
+        }
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        # Max plan only
+        plan = request.user.subscription.plan.name
+        if plan != "max":
+            return Response(
+                {
+                    "error": "Bulk pitch generation is a Max plan feature. Please upgrade."
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = BulkGeneratePitchSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        lead_ids = serializer.validated_data["lead_ids"]
+        tone = serializer.validated_data["tone"]
+        sender_name = serializer.validated_data["sender_name"]
+
+        # 1. Fetch only leads that actually exist in the DB (Missing leads cost 0 tokens)
+        leads_qs = Lead.objects.filter(id__in=lead_ids)
+        existing_leads = list(leads_qs)
+        existing_ids = {l.id for l in existing_leads}
+        missing_ids = [lid for lid in lead_ids if lid not in existing_ids]
+
+        # 2. Check if user has enough ai_pitch quota for the existing leads
+        from freelanceleads.quota_guard import get_remaining_quota
+        remaining = get_remaining_quota(request.user, "ai_pitch")
+        
+        quota_exceeded_ids = []
+        if remaining != 999_999 and remaining < len(existing_leads):
+            # Track which leads were dropped because quota ran out
+            quota_exceeded_ids = [l.id for l in existing_leads[remaining:]]
+            existing_leads = existing_leads[:remaining]
+
+        # 3. Send ONLY valid, within-quota leads to the AI
+        results = []
+        if existing_leads:
+            results = generate_bulk_pitches(existing_leads, tone=tone, sender_name=sender_name)
+
+        # 4. Explicitly append missing leads to the response (proves we didn't send them to AI)
+        for missing_id in missing_ids:
+            results.append({
+                "lead_id": missing_id,
+                "pitch": None,
+                "error": "Lead does not exist in the database (0 tokens used)."
+            })
+
+        # 5. Explicitly append quota-exceeded leads to the response
+        for quota_id in quota_exceeded_ids:
+            results.append({
+                "lead_id": quota_id,
+                "pitch": None,
+                "error": "Insufficient AI pitch quota (0 tokens used)."
+            })
+
+        # Increment quota for each successful pitch
+        success_count = sum(1 for r in results if r["error"] is None)
+        for _ in range(success_count):
+            increment(request.user, "ai_pitch")
+
+        return Response(
+            {
+                "results": results,
+                "success_count": success_count,
+                "failed_count": len(results) - success_count,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# ─────────────────────────────────────────────────────────────
+#  AI Chat Assistant
+# ─────────────────────────────────────────────────────────────
+
+
+class ChatView(APIView):
+    """
+    POST /api/ai/chat/
+
+    Multi-turn AI chat assistant for pitch help, objection handling,
+    pricing advice etc.
+
+    Frontend sends full conversation history with each request.
+    Claude/OpenAI is stateless — history passed every time.
+
+    Request:
+        {
+            "message": "How do I respond if they say they already have a website?",
+            "history": [
+                {"role": "user",      "content": "Help me write a pitch for a plumber"},
+                {"role": "assistant", "content": "Sure! Here's a pitch..."}
+            ]
+        }
+
+    Response:
+        {
+            "reply"  : "Great question! Here's how to handle that objection...",
+            "history": [...updated history including this exchange...]
+        }
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChatSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        # Quota check
+        check(request.user, "ai_chat")
+
+        message = serializer.validated_data["message"]
+        history = serializer.validated_data["history"]
+
+        # Build full message list for OpenAI
+        messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+
+        # Add conversation history (truncate to last 6 messages to save tokens)
+        for msg in history[-6:]:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+
+        # Add current user message
+        messages.append({"role": "user", "content": message})
+
+        try:
+            # Enforce hard limit on output tokens to prevent long essays
+            reply = ai_chat(messages=messages, max_tokens=200)
+        except RuntimeError as e:
+            return Response({"error": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        # Increment quota
+        increment(request.user, "ai_chat")
+
+        # Return updated history so frontend can store it
+        updated_history = list(history) + [
+            {"role": "user", "content": message},
+            {"role": "assistant", "content": reply},
+        ]
+
+        return Response(
+            {
+                "reply": reply,
+                "history": updated_history,
+            },
+            status=status.HTTP_200_OK,
+        )
