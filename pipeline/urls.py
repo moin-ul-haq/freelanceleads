@@ -2,7 +2,8 @@ from django.urls import path
 from pipeline.views import (
     BoardView, StatsView, 
     PipelineLeadListCreateView, PipelineLeadDetailView, PipelineLeadMoveView,
-    PipelineStageListCreateView, PipelineStageDetailView, PipelineStageReorderView
+    PipelineStageListCreateView, PipelineStageDetailView, PipelineStageReorderView,
+    CSVExportView,
 )
 
 urlpatterns = [
@@ -16,4 +17,7 @@ urlpatterns = [
     path('stages/', PipelineStageListCreateView.as_view(), name='pipeline-stage-list'),
     path('stages/reorder/', PipelineStageReorderView.as_view(), name='pipeline-stage-reorder'),
     path('stages/<int:pk>/', PipelineStageDetailView.as_view(), name='pipeline-stage-detail'),
+
+    path('export/csv/', CSVExportView.as_view(), name='pipeline-export-csv'),
 ]
+

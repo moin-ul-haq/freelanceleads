@@ -57,3 +57,24 @@ class ChatSerializer(serializers.Serializer):
         required=False,
         default=[],
     )
+
+
+# ─────────────────────────────────────────────────────────────
+#  Proposal Serializers
+# ─────────────────────────────────────────────────────────────
+
+
+class GenerateProposalSerializer(serializers.Serializer):
+    """POST /api/ai/generate-proposal/"""
+
+    lead_id = serializers.IntegerField()
+    sender_name = serializers.CharField(max_length=100, default="Alex", required=False)
+    service_type = serializers.ChoiceField(
+        choices=["web_design", "seo", "gbp_optimization", "social_media", "full_package"],
+        default="web_design",
+        required=False,
+    )
+    price_range = serializers.CharField(
+        max_length=50, default="$500–$2,000", required=False
+    )
+

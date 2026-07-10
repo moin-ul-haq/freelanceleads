@@ -66,6 +66,11 @@ class Lead(models.Model):
             models.Index(
                 fields=["niche", "city", "state", "country"]
             ),  # supports both city and state level search
+            # Individual field indexes for iexact filter paths
+            models.Index(fields=["niche", "city", "country"]),
+            models.Index(fields=["city"]),
+            models.Index(fields=["niche"]),
+            models.Index(fields=["audit_done", "has_website", "email"]),  # audit backfill query
         ]
 
     def __str__(self):

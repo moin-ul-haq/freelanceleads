@@ -99,17 +99,26 @@ class CampaignLead(models.Model):
 
     class Meta:
         unique_together = ('campaign', 'lead')
+        indexes = [
+            models.Index(fields=['campaign', 'status']),  # analytics queries
+            models.Index(fields=['status', 'next_step_date']),  # scheduled task
+        ]
 
     def __str__(self):
         return f"{self.lead.name} in {self.campaign.name}"
 
 class OutreachMessage(models.Model):
     campaign_lead = models.ForeignKey(CampaignLead, on_delete=models.CASCADE, related_name='messages')
-    message_id = models.CharField(max_length=255, unique=True)
+    message_id = models.CharField(max_length=255, unique=True, db_index=True)
     subject = models.CharField(max_length=255)
     body = models.TextField()
     sent_at = models.DateTimeField(auto_now_add=True)
     opened_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['campaign_lead']),  # analytics aggregation
+        ]
 
     def __str__(self):
         return f"Msg: {self.subject} to {self.campaign_lead.lead.name}"

@@ -2,6 +2,8 @@ from rest_framework import generics, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from django.db.models import Count, Case, When, Q
+from django.core import signing
 from django.http import HttpResponse
 from django.utils import timezone
 import base64
@@ -43,7 +45,11 @@ class CampaignListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Campaign.objects.filter(user=self.request.user).prefetch_related("steps")
+        return Campaign.objects.filter(
+            user=self.request.user
+        ).prefetch_related("steps").annotate(
+            _enrolled_count=Count('campaign_leads')
+        )
 
     def create(self, request, *args, **kwargs):
         user_accounts = EmailAccount.objects.filter(user=request.user)
@@ -58,9 +64,7 @@ class CampaignListCreateView(generics.ListCreateAPIView):
 
         if account_count == 1 and not email_account_id:
             # Auto-assign the only email account
-            request.data._mutable = True  # allow modifying QueryDict
-            request.data["email_account"] = user_accounts.first().id
-            request.data._mutable = False
+            email_account_id = user_accounts.first().id
 
         if account_count > 1 and not email_account_id:
             # Require explicit selection
@@ -83,10 +87,16 @@ class CampaignListCreateView(generics.ListCreateAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Store for perform_create (avoids mutating request.data)
+        self._resolved_email_account_id = email_account_id
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        save_kwargs = {"user": self.request.user}
+        resolved_id = getattr(self, "_resolved_email_account_id", None)
+        if resolved_id:
+            save_kwargs["email_account_id"] = resolved_id
+        serializer.save(**save_kwargs)
 
 
 class CampaignDetailView(generics.RetrieveUpdateAPIView):
@@ -119,7 +129,14 @@ class CampaignStepCreateView(generics.CreateAPIView):
 
     def perform_create(self, serializer):
         campaign_id = self.request.data.get('campaign_id')
-        campaign = Campaign.objects.get(id=campaign_id, user=self.request.user)
+        if not campaign_id:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({"campaign_id": "This field is required."})
+        try:
+            campaign = Campaign.objects.get(id=campaign_id, user=self.request.user)
+        except Campaign.DoesNotExist:
+            from rest_framework.exceptions import NotFound
+            raise NotFound("Campaign not found or does not belong to you.")
         serializer.save(campaign=campaign)
 
 class CampaignEnrollView(APIView):
@@ -164,16 +181,18 @@ class CampaignEnrollView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Batch fetch all leads in one query instead of N individual get() calls
+        from leads.models import Lead
+
+        leads_map = {l.id: l for l in Lead.objects.filter(id__in=lead_ids)}
+
         created_count = 0
         skipped_ids = []
         missing_email_ids = []
 
         for lid in lead_ids:
-            from leads.models import Lead
-
-            try:
-                lead = Lead.objects.get(id=lid)
-            except Lead.DoesNotExist:
+            lead = leads_map.get(lid)
+            if not lead:
                 skipped_ids.append({"lead_id": lid, "reason": "not_found"})
                 continue
 
@@ -212,6 +231,9 @@ class UnifiedInboxView(generics.ListAPIView):
     def get_queryset(self):
         return EmailReply.objects.filter(
             outreach_message__campaign_lead__campaign__user=self.request.user
+        ).select_related(
+            'outreach_message__campaign_lead__campaign',
+            'outreach_message__campaign_lead__lead',
         ).order_by('-received_at')
 
 class TrackingPixelView(APIView):
@@ -224,7 +246,7 @@ class TrackingPixelView(APIView):
             msg = OutreachMessage.objects.get(message_id=message_id)
             if not msg.opened_at:
                 msg.opened_at = timezone.now()
-                msg.save()
+                msg.save(update_fields=["opened_at"])
         except OutreachMessage.DoesNotExist:
             pass
             
@@ -241,6 +263,9 @@ class GoogleAuthURLView(APIView):
         client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
         redirect_uri = request.build_absolute_uri('/api/outreach/google/callback/')
 
+        # Sign the user ID to prevent tampering in the OAuth state param
+        signed_state = signing.dumps(request.user.id, salt='google-oauth-state')
+
         params = urlencode({
             'client_id': client_id,
             'redirect_uri': redirect_uri,
@@ -248,7 +273,7 @@ class GoogleAuthURLView(APIView):
             'scope': 'https://mail.google.com/ https://www.googleapis.com/auth/userinfo.email',
             'access_type': 'offline',
             'prompt': 'consent',
-            'state': str(request.user.id),  # We pass user ID so callback knows who to link
+            'state': signed_state,
         })
 
         auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{params}"
@@ -263,10 +288,16 @@ class GoogleCallbackView(APIView):
         from django.contrib.auth import get_user_model
 
         code = request.query_params.get('code')
-        user_id = request.query_params.get('state')
+        state = request.query_params.get('state')
 
-        if not code or not user_id:
+        if not code or not state:
             return Response({"error": "Missing code or state."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Verify the signed state token — prevents account takeover
+        try:
+            user_id = signing.loads(state, salt='google-oauth-state', max_age=600)
+        except signing.BadSignature:
+            return Response({"error": "Invalid or expired state token."}, status=status.HTTP_400_BAD_REQUEST)
 
         User = get_user_model()
         try:
@@ -313,3 +344,67 @@ class GoogleCallbackView(APIView):
             "email": email_address,
             "created": created,
         })
+
+
+class CampaignAnalyticsView(APIView):
+    """
+    GET /api/outreach/campaigns/<pk>/analytics/
+
+    Returns aggregate stats for a campaign:
+    - Total emails sent
+    - Total opened / open rate
+    - Total replied / reply rate
+    - Total bounced
+    - Active / completed leads
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            campaign = Campaign.objects.get(pk=pk, user=request.user)
+        except Campaign.DoesNotExist:
+            return Response(
+                {"error": "Campaign not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Conditional aggregation: 2 queries instead of 7 separate COUNT queries
+        lead_stats = CampaignLead.objects.filter(campaign=campaign).aggregate(
+            total_enrolled=Count('id'),
+            total_replied=Count(Case(When(status='replied', then='id'))),
+            total_bounced=Count(Case(When(status='bounced', then='id'))),
+            total_active=Count(Case(When(status='active', then='id'))),
+            total_completed=Count(Case(When(status='completed', then='id'))),
+        )
+
+        msg_stats = OutreachMessage.objects.filter(
+            campaign_lead__campaign=campaign
+        ).aggregate(
+            total_sent=Count('id'),
+            total_opened=Count('id', filter=Q(opened_at__isnull=False)),
+        )
+
+        total_enrolled = lead_stats['total_enrolled']
+        total_sent = msg_stats['total_sent']
+        total_opened = msg_stats['total_opened']
+        total_replied = lead_stats['total_replied']
+
+        open_rate = round((total_opened / total_sent * 100), 2) if total_sent > 0 else 0.0
+        reply_rate = round((total_replied / total_enrolled * 100), 2) if total_enrolled > 0 else 0.0
+
+        return Response({
+            "campaign_id": campaign.id,
+            "campaign_name": campaign.name,
+            "status": campaign.status,
+            "total_enrolled": total_enrolled,
+            "total_sent": total_sent,
+            "total_opened": total_opened,
+            "open_rate": open_rate,
+            "total_replied": total_replied,
+            "reply_rate": reply_rate,
+            "total_bounced": lead_stats['total_bounced'],
+            "total_active": lead_stats['total_active'],
+            "total_completed": lead_stats['total_completed'],
+        })
+

@@ -20,6 +20,7 @@ class Plan(models.Model):
     saved_leads_limit = models.IntegerField(default=0)
     ai_chat_limit = models.IntegerField(default=0)
     bulk_search_limit = models.IntegerField(default=0)
+    team_seat_limit = models.IntegerField(default=1)  # Free=1, Pro=1, Max=3
 
     def __str__(self):
         return f"{self.name} — ${self.price_usd}"

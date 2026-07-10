@@ -53,7 +53,8 @@ class CampaignSerializer(serializers.ModelSerializer):
         read_only_fields = ["user", "created_at", "updated_at"]
 
     def get_enrolled_count(self, obj):
-        return obj.campaign_leads.count()
+        # Use annotation from queryset if available, fallback to DB count
+        return getattr(obj, '_enrolled_count', obj.campaign_leads.count())
 
 class EmailReplySerializer(serializers.ModelSerializer):
     lead_name = serializers.CharField(source='outreach_message.campaign_lead.lead.name', read_only=True)

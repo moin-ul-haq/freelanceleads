@@ -1,4 +1,5 @@
 from django.contrib.auth.models import AbstractUser
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import models
 
 
@@ -20,7 +21,7 @@ class User(AbstractUser):
         """Return the user's active subscription plan, or None."""
         try:
             return self.subscription.plan
-        except Exception:
+        except (AttributeError, ObjectDoesNotExist):
             return None
 
     @property
@@ -28,7 +29,7 @@ class User(AbstractUser):
         """Return the team this user belongs to, or None."""
         try:
             return self.seat.team
-        except Exception:
+        except (AttributeError, ObjectDoesNotExist):
             return None
 
 

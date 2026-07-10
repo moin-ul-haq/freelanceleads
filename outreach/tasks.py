@@ -1,5 +1,6 @@
 from celery import shared_task
 from django.db import close_old_connections
+from django.conf import settings
 from django.utils import timezone
 import smtplib
 import imaplib
@@ -9,8 +10,11 @@ import uuid
 import requests
 import base64
 import re
+import logging
 from datetime import timedelta
 from outreach.models import EmailAccount, CampaignLead, OutreachMessage, EmailReply
+
+logger = logging.getLogger(__name__)
 
 def refresh_google_token(account: EmailAccount):
     import os
@@ -49,7 +53,7 @@ def process_outreach_campaigns():
         campaign__email_account__isnull=False,
     ).exclude(lead__email='').select_related(
         'campaign', 'campaign__email_account', 'lead'
-    )
+    ).prefetch_related('campaign__steps')
     
     for cl in active_leads:
         account = cl.campaign.email_account
@@ -59,7 +63,15 @@ def process_outreach_campaigns():
         step = cl.campaign.steps.filter(step_order=cl.current_step).first()
         if not step:
             cl.status = 'completed'
-            cl.save()
+            cl.save(update_fields=['status'])
+            continue
+
+        # Enforce email_send quota — skip if exhausted
+        from freelanceleads.quota_guard import check, increment
+        try:
+            check(cl.campaign.user, 'email_send')
+        except Exception:
+            logger.info("Email send quota exhausted for user %s, skipping.", cl.campaign.user.id)
             continue
             
         msg = EmailMessage()
@@ -71,7 +83,7 @@ def process_outreach_campaigns():
         unique_id = f"<{uuid.uuid4()}@{account.email_address.split('@')[-1]}>"
         msg['Message-ID'] = unique_id
         
-        tracking_url = f"http://localhost:8000/api/outreach/track/{unique_id.strip('<>')}.gif"
+        tracking_url = f"{settings.SITE_URL}/api/outreach/track/{unique_id.strip('<>')}.gif"
         html_body = step.body_template.replace("{{first_name}}", first_name)
         html_body += f'<img src="{tracking_url}" width="1" height="1" style="display:none;" />'
         
@@ -100,6 +112,9 @@ def process_outreach_campaigns():
                 subject=msg['Subject'],
                 body=html_body
             )
+
+            # Increment email_send quota after successful send
+            increment(cl.campaign.user, 'email_send')
             
             cl.current_step += 1
             next_step = cl.campaign.steps.filter(step_order=cl.current_step).first()
@@ -110,12 +125,15 @@ def process_outreach_campaigns():
             cl.save()
             
         except Exception as e:
-            print(f"Failed to send email to {cl.lead.email}: {e}")
+            logger.error("Failed to send email to %s: %s", cl.lead.email, e)
 
 @shared_task
 def poll_imap_replies():
     close_old_connections()
-    accounts = EmailAccount.objects.all()
+    # Only poll accounts that have active campaigns (not all accounts globally)
+    accounts = EmailAccount.objects.filter(
+        campaigns__status='active'
+    ).distinct()
     
     for account in accounts:
         try:
@@ -174,4 +192,4 @@ def poll_imap_replies():
                         break
                         
         except Exception as e:
-            print(f"Error polling IMAP for {account.email_address}: {e}")
+            logger.error("Error polling IMAP for %s: %s", account.email_address, e)

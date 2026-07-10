@@ -14,23 +14,27 @@ def send_hourly_follow_up_reminders():
     and sends a reminder.
     """
     now_utc = timezone.now()
-    users_at_8am = []
-    
-    # 1. Identify which users are currently at 8am
-    for user in User.objects.all():
+
+    # 1. Compute which timezones are currently at 8am — avoid loading all users
+    timezones_at_8am = []
+    for tz_name in pytz.common_timezones:
         try:
-            user_tz = pytz.timezone(user.timezone)
-        except pytz.UnknownTimeZoneError:
-            user_tz = pytz.UTC
-            
-        local_time = now_utc.astimezone(user_tz)
-        if local_time.hour == 8:
-            users_at_8am.append(user)
+            tz = pytz.timezone(tz_name)
+            if now_utc.astimezone(tz).hour == 8:
+                timezones_at_8am.append(tz_name)
+        except Exception:
+            continue
+
+    if not timezones_at_8am:
+        return "No timezones at 8am right now."
+
+    # 2. Single query: fetch only users in matching timezones
+    users_at_8am = list(User.objects.filter(timezone__in=timezones_at_8am))
 
     if not users_at_8am:
         return "No users at 8am right now."
 
-    # 2. Find pipeline leads for these users that need follow up today
+    # 3. Find pipeline leads for these users that need follow up today
     for user in users_at_8am:
         try:
             user_tz = pytz.timezone(user.timezone)
@@ -44,7 +48,7 @@ def send_hourly_follow_up_reminders():
             follow_up_date=local_today
         ).exclude(
             stage__system_key__in=['closed_won', 'closed_lost']
-        )
+        ).select_related('lead', 'stage')
         
         for lead in leads_to_remind:
             # Here we would send the email. 

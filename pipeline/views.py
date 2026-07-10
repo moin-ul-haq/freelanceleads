@@ -1,5 +1,5 @@
 import csv
-from django.db.models import Prefetch, Sum
+from django.db.models import Prefetch, Sum, Count, Q, Case, When, DecimalField
 from django.http import StreamingHttpResponse
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -21,14 +21,29 @@ class BoardView(APIView):
         return Response(serializer.data)
 
 class StatsView(APIView):
+    """Optimized: single query with conditional aggregation instead of 4 separate queries."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        base_qs = PipelineLead.objects.filter(user=request.user)
-        total_value = base_qs.aggregate(Sum('deal_value'))['deal_value__sum'] or 0.00
-        won_value = base_qs.filter(stage__system_key='closed_won').aggregate(Sum('deal_value'))['deal_value__sum'] or 0.00
-        total_leads = base_qs.count()
-        won_leads = base_qs.filter(stage__system_key='closed_won').count()
+        stats = PipelineLead.objects.filter(user=request.user).aggregate(
+            total_value=Sum('deal_value'),
+            won_value=Sum(
+                Case(
+                    When(stage__system_key='closed_won', then='deal_value'),
+                    default=0,
+                    output_field=DecimalField(),
+                )
+            ),
+            total_leads=Count('id'),
+            won_leads=Count(
+                Case(When(stage__system_key='closed_won', then='id'))
+            ),
+        )
+
+        total_value = stats['total_value'] or 0.00
+        won_value = stats['won_value'] or 0.00
+        total_leads = stats['total_leads']
+        won_leads = stats['won_leads']
         conversion_rate = round((won_leads / total_leads * 100), 2) if total_leads > 0 else 0.0
 
         return Response({
@@ -43,7 +58,9 @@ class PipelineLeadListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return PipelineLead.objects.filter(user=self.request.user)
+        return PipelineLead.objects.filter(
+            user=self.request.user
+        ).select_related('lead', 'stage').prefetch_related('logs')
 
     def perform_create(self, serializer):
         stage = serializer.validated_data['stage']
@@ -63,7 +80,9 @@ class PipelineLeadDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return PipelineLead.objects.filter(user=self.request.user)
+        return PipelineLead.objects.filter(
+            user=self.request.user
+        ).select_related('lead', 'stage').prefetch_related('logs')
     
     def perform_destroy(self, instance):
         ActivityLog.objects.create(
@@ -78,7 +97,7 @@ class PipelineLeadMoveView(APIView):
 
     def patch(self, request, pk):
         try:
-            lead = PipelineLead.objects.get(pk=pk, user=request.user)
+            lead = PipelineLead.objects.select_related('stage').get(pk=pk, user=request.user)
         except PipelineLead.DoesNotExist:
             return Response(status=status.HTTP_404_NOT_FOUND)
         
@@ -133,6 +152,62 @@ class PipelineStageReorderView(APIView):
     
     def patch(self, request):
         stages = request.data.get('stages', [])
-        for item in stages:
-            PipelineStage.objects.filter(id=item['id'], user=request.user).update(order=item['order'])
+        if not stages:
+            return Response({"status": "reordered"})
+
+        # Single SELECT + single bulk UPDATE instead of N individual UPDATEs
+        stage_ids = [item['id'] for item in stages]
+        order_map = {item['id']: item['order'] for item in stages}
+        stage_objs = list(
+            PipelineStage.objects.filter(id__in=stage_ids, user=request.user)
+        )
+        for obj in stage_objs:
+            obj.order = order_map[obj.id]
+        PipelineStage.objects.bulk_update(stage_objs, ['order'])
         return Response({"status": "reordered"})
+
+
+class Echo:
+    """Write-only pseudo-buffer for csv.writer to stream rows."""
+    def write(self, value):
+        return value
+
+
+class CSVExportView(APIView):
+    """
+    GET /api/pipeline/export/csv/
+    Exports all pipeline leads as a downloadable CSV file.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        leads = PipelineLead.objects.filter(
+            user=request.user
+        ).select_related('lead', 'stage').order_by('stage__order', 'order')
+
+        def csv_rows():
+            writer = csv.writer(Echo())
+            yield writer.writerow([
+                'Lead Name', 'Niche', 'City', 'Country', 'Website',
+                'Phone', 'Email', 'Stage', 'Deal Value',
+                'Follow-up Date', 'Notes', 'Created At'
+            ])
+            for pl in leads:
+                yield writer.writerow([
+                    pl.lead.name,
+                    pl.lead.niche,
+                    pl.lead.city,
+                    pl.lead.country,
+                    pl.lead.website or '',
+                    pl.lead.phone or '',
+                    pl.lead.email or '',
+                    pl.stage.name,
+                    str(pl.deal_value),
+                    str(pl.follow_up_date or ''),
+                    pl.notes,
+                    pl.created_at.strftime('%Y-%m-%d %H:%M'),
+                ])
+
+        response = StreamingHttpResponse(csv_rows(), content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="pipeline_export.csv"'
+        return response

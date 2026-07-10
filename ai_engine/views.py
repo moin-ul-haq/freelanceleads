@@ -10,12 +10,13 @@ from rest_framework import status
 from freelanceleads.quota_guard import check, increment
 from leads.models import Lead
 from services.ai import chat as ai_chat
-from ai_engine.pitch import generate_pitch, generate_bulk_pitches
+from ai_engine.pitch import generate_pitch, generate_bulk_pitches, generate_proposal
 from ai_engine.prompts import CHAT_SYSTEM_PROMPT
 from ai_engine.serializers import (
     GeneratePitchSerializer,
     BulkGeneratePitchSerializer,
     ChatSerializer,
+    GenerateProposalSerializer,
 )
 
 
@@ -116,9 +117,9 @@ class BulkGeneratePitchView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        # Max plan only
-        plan = request.user.subscription.plan.name
-        if plan != "max":
+        # Max plan only — safe access to subscription
+        subscription = getattr(request.user, "subscription", None)
+        if not subscription or subscription.plan.name != "max":
             return Response(
                 {
                     "error": "Bulk pitch generation is a Max plan feature. Please upgrade."
@@ -262,3 +263,75 @@ class ChatView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+# ─────────────────────────────────────────────────────────────
+#  Proposal Generator
+# ─────────────────────────────────────────────────────────────
+
+
+class GenerateProposalView(APIView):
+    """
+    POST /api/ai/generate-proposal/
+
+    Generates a professional proposal for a lead based on audit data.
+    Includes problem summary, proposed solution, deliverables, timeline, and pricing.
+
+    Request:
+        {
+            "lead_id"      : 42,
+            "sender_name"  : "Ahmad",
+            "service_type" : "web_design",
+            "price_range"  : "$500–$2,000"
+        }
+
+    Response:
+        {
+            "proposal" : "## Proposal for ...\n\n...",
+            "lead_id"  : 42
+        }
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = GenerateProposalSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        # Quota check — proposals count as AI pitch usage
+        check(request.user, "ai_pitch")
+
+        lead_id = serializer.validated_data["lead_id"]
+        sender_name = serializer.validated_data["sender_name"]
+        service_type = serializer.validated_data["service_type"]
+        price_range = serializer.validated_data["price_range"]
+
+        try:
+            lead = Lead.objects.get(id=lead_id)
+        except Lead.DoesNotExist:
+            return Response(
+                {"error": "Lead not found."}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            proposal = generate_proposal(
+                lead,
+                sender_name=sender_name,
+                service_type=service_type,
+                price_range=price_range,
+            )
+        except RuntimeError as e:
+            return Response({"error": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        # Increment quota only on success
+        increment(request.user, "ai_pitch")
+
+        return Response(
+            {
+                "proposal": proposal,
+                "lead_id": lead_id,
+            },
+            status=status.HTTP_200_OK,
+        )
+

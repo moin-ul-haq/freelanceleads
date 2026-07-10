@@ -160,7 +160,8 @@ class TeamSerializer(serializers.ModelSerializer):
         read_only_fields = ("owner", "created_at")
 
     def get_seat_count(self, obj):
-        return obj.seats.count()
+        # Use len() to avoid extra COUNT query when seats are already prefetched/serialized
+        return obj.seats.count() if not hasattr(obj, '_prefetched_objects_cache') else len(obj.seats.all())
 
     def create(self, validated_data):
         owner = self.context["request"].user

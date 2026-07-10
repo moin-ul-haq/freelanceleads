@@ -55,9 +55,16 @@ def calculate_score(
 
     if not has_website:
         score += PROBLEM_WEIGHTS["no_website"]
+    else:
+        # These checks are only meaningful if a website exists
+        if not has_ssl:
+            score += PROBLEM_WEIGHTS["no_ssl"]
 
-    if not has_ssl:
-        score += PROBLEM_WEIGHTS["no_ssl"]
+        if not has_meta_title or not has_meta_desc:
+            score += PROBLEM_WEIGHTS["missing_meta"]
+
+        if not has_schema:
+            score += PROBLEM_WEIGHTS["no_schema"]
 
     # TODO: Uncomment when pagespeed integration is ready
     # if pagespeed_score is not None and pagespeed_score < 50:
@@ -68,12 +75,6 @@ def calculate_score(
 
     if review_count < 10:
         score += PROBLEM_WEIGHTS["low_review_count"]
-
-    if not has_meta_title or not has_meta_desc:
-        score += PROBLEM_WEIGHTS["missing_meta"]
-
-    if not has_schema:
-        score += PROBLEM_WEIGHTS["no_schema"]
 
     if not has_social:
         score += PROBLEM_WEIGHTS["no_social"]
@@ -110,9 +111,15 @@ def get_score_reasons(
 
     if not has_website:
         reasons.append("No website found")
+    else:
+        if not has_ssl:
+            reasons.append("No SSL certificate (HTTP only)")
 
-    if not has_ssl:
-        reasons.append("No SSL certificate (HTTP only)")
+        if not has_meta_title or not has_meta_desc:
+            reasons.append("Missing meta title or description")
+
+        if not has_schema:
+            reasons.append("No schema markup found")
 
     # TODO: Uncomment when pagespeed integration is ready
     # if pagespeed_score is not None and pagespeed_score < 50:
@@ -123,12 +130,6 @@ def get_score_reasons(
 
     if review_count < 10:
         reasons.append(f"Very few reviews ({review_count})")
-
-    if not has_meta_title or not has_meta_desc:
-        reasons.append("Missing meta title or description")
-
-    if not has_schema:
-        reasons.append("No schema markup found")
 
     if not has_social:
         reasons.append("No social media presence")

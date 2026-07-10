@@ -1,6 +1,7 @@
 # core/quota_guard.py
 
 from datetime import date
+from functools import lru_cache
 
 from django.core.cache import cache
 from django.db.models import F
@@ -25,21 +26,47 @@ def get_period_start() -> date:
     return today.replace(day=1)
 
 
+def _resolve_quota_user(user):
+    """
+    Team members share the team owner's quota pool.
+    Returns the team owner if the user belongs to a team, otherwise the user themselves.
+    This ensures all quota checks and increments use the owner's subscription and counters.
+
+    Uses _cached_quota_user_id on the user object to avoid repeat DB lookups
+    within the same request.
+    """
+    cached = getattr(user, '_cached_quota_user', None)
+    if cached is not None:
+        return cached
+
+    try:
+        seat = user.seat
+        resolved = seat.team.owner
+    except Exception:
+        resolved = user
+
+    # Cache on the user object (lives for the duration of this request)
+    user._cached_quota_user = resolved
+    return resolved
+
+
 def _get_plan_limit(user, action: str) -> int:
     """Returns base plan limit for action. -1 = unlimited."""
+    quota_user = _resolve_quota_user(user)
     limit_field = LIMIT_FIELD_MAP.get(action)
     if not limit_field:
         raise ValueError(f"Unknown action: {action}")
     try:
-        return getattr(user.subscription.plan, limit_field, 0)
+        return getattr(quota_user.subscription.plan, limit_field, 0)
     except Exception:
         return 0
 
 
 def _get_counter(user, action: str) -> UsageCounter:
     """Fetches or creates UsageCounter for current period."""
+    quota_user = _resolve_quota_user(user)
     counter, _ = UsageCounter.objects.get_or_create(
-        user=user,
+        user=quota_user,
         action=action,
         reset_date=get_period_start(),
         defaults={"count": 0, "bonus": 0},
@@ -69,6 +96,7 @@ def get_remaining_quota(user, action: str) -> int:
     Returns the exact number of remaining credits for an action.
     Returns 999_999 for unlimited plans.
     """
+    quota_user = _resolve_quota_user(user)
     base_limit = _get_plan_limit(user, action)
     if base_limit == -1:
         return 999_999
@@ -77,7 +105,7 @@ def get_remaining_quota(user, action: str) -> int:
     effective_limit = base_limit + counter.bonus
     
     period_start = get_period_start()
-    redis_key = _get_redis_key(user.id, action, period_start)
+    redis_key = _get_redis_key(quota_user.id, action, period_start)
     cached_count = cache.get(redis_key)
     
     if cached_count is None:
@@ -98,8 +126,9 @@ def check(user, action: str) -> None:
 
     # Single DB call — reused for both count and bonus
     counter = _get_counter(user, action)
+    quota_user = _resolve_quota_user(user)
     period_start = get_period_start()
-    redis_key = _get_redis_key(user.id, action, period_start)
+    redis_key = _get_redis_key(quota_user.id, action, period_start)
     cached_count = cache.get(redis_key)
 
     if cached_count is None:
@@ -120,8 +149,9 @@ def check(user, action: str) -> None:
 
 
 def increment(user, action: str) -> None:
+    quota_user = _resolve_quota_user(user)
     period_start = get_period_start()
-    redis_key = _get_redis_key(user.id, action, period_start)
+    redis_key = _get_redis_key(quota_user.id, action, period_start)
 
     counter = _get_counter(user, action)
     UsageCounter.objects.filter(pk=counter.pk).update(
@@ -173,8 +203,9 @@ def _seconds_until_month_end() -> int:
     from datetime import datetime
     import calendar
 
-    today = date.today()
+    now = timezone.now()
+    today = now.date()
     last_day = calendar.monthrange(today.year, today.month)[1]
-    month_end = datetime(today.year, today.month, last_day, 23, 59, 59)
-    delta = month_end - datetime.now()
+    month_end = datetime(today.year, today.month, last_day, 23, 59, 59, tzinfo=now.tzinfo)
+    delta = month_end - now
     return max(int(delta.total_seconds()), 1)

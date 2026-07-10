@@ -11,6 +11,9 @@ class PipelineStage(models.Model):
 
     class Meta:
         ordering = ['order']
+        indexes = [
+            models.Index(fields=['user', 'order']),
+        ]
 
     def __str__(self):
         return f"{self.name} ({self.user.email})"
@@ -28,6 +31,10 @@ class PipelineLead(models.Model):
 
     class Meta:
         ordering = ['order', '-created_at']
+        indexes = [
+            models.Index(fields=['user', 'stage']),
+            models.Index(fields=['user', 'follow_up_date']),
+        ]
 
     def __str__(self):
         return f"{self.lead.name} -> {self.stage.name}"

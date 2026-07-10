@@ -5,13 +5,21 @@
 
 import json
 from services.ai import complete, complete_json
-from ai_engine.prompts import PITCH_SYSTEM_PROMPT, BULK_PITCH_SYSTEM_PROMPT
+from ai_engine.prompts import PITCH_SYSTEM_PROMPT, BULK_PITCH_SYSTEM_PROMPT, PROPOSAL_SYSTEM_PROMPT
 
 TONE_LABELS = {
     "professional": "professional and polished",
     "friendly": "warm and conversational",
     "direct": "straight to the point, no fluff",
     "urgent": "creates mild urgency without being pushy",
+}
+
+SERVICE_LABELS = {
+    "web_design": "Custom Website Design & Development",
+    "seo": "Search Engine Optimization (SEO)",
+    "gbp_optimization": "Google Business Profile Optimization",
+    "social_media": "Social Media Marketing",
+    "full_package": "Full Digital Marketing Package (Web + SEO + GBP + Social)",
 }
 
 def _build_audit_summary(lead) -> dict:
@@ -122,3 +130,27 @@ def generate_bulk_pitches(
                 results.append({"lead_id": lead.id, "pitch": None, "error": str(e)})
                 
     return results
+
+
+def generate_proposal(
+    lead, sender_name: str = "Alex", service_type: str = "web_design", price_range: str = "$500–$2,000"
+) -> str:
+    """
+    Generate a professional proposal for a lead based on audit data.
+    Uses PROPOSAL_SYSTEM_PROMPT.
+    """
+    service_label = SERVICE_LABELS.get(service_type, SERVICE_LABELS["web_design"])
+    audit_data = _build_audit_summary(lead)
+
+    user_prompt = json.dumps({
+        "lead": audit_data,
+        "sender_name": sender_name,
+        "service": service_label,
+        "price_range": price_range,
+    }, indent=2)
+
+    return complete(
+        system_prompt=PROPOSAL_SYSTEM_PROMPT,
+        user_prompt=user_prompt,
+        temperature=0.7,
+    )

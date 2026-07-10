@@ -17,8 +17,10 @@ app.autodiscover_tasks(
         "accounts",
         "billing",
         "leads",
+        "ai_engine",
         "pipeline",
         "outreach",
+        "services",
     ]
 )
 

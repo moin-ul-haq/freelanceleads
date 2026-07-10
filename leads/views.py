@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 
-from freelanceleads.quota_guard import check, increment, _get_plan_limit, _get_counter
+from freelanceleads.quota_guard import check, increment, get_remaining_quota
 from services.serp import search_businesses
 from services.scoring import calculate_score
 from leads.tasks import audit_leads_batch
@@ -48,6 +48,7 @@ def _get_search_cache(cache_key: str) -> SearchCache | None:
 def _leads_by_ids(lead_ids: list[int]) -> list[Lead]:
     if not lead_ids:
         return []
+    # Use .only() to skip unused heavy fields and avoid loading full model
     return list(
         Lead.objects.filter(id__in=lead_ids).order_by("-opportunity_score")
     )
@@ -69,15 +70,6 @@ def _serializer_context(request, leads: list[Lead]) -> dict:
         "request": request,
         "saved_lead_ids": _get_saved_lead_ids(request.user, lead_ids),
     }
-
-
-def _get_remaining_quota(user, action: str) -> int:
-    base_limit = _get_plan_limit(user, action)
-    if base_limit == -1:
-        return 999_999
-    counter = _get_counter(user, action)
-    effective_limit = base_limit + counter.bonus
-    return max(0, effective_limit - counter.count)
 
 
 def _query_leads_from_db(niche: str, city: str, country: str):
@@ -113,12 +105,34 @@ def _save_businesses_as_leads(
     country: str,
     refresh: bool = False,
 ) -> list:
-    leads = []
+    """
+    Bulk-save businesses as Lead records.
+    Uses bulk operations to minimize DB round-trips:
+    - Single query to find existing leads by place_id
+    - Bulk create for new leads
+    - Bulk update for refresh
+    """
+    if not businesses:
+        return []
 
-    for biz in businesses:
-        if not biz.get("place_id"):
-            continue
+    # Filter out businesses without place_id
+    valid_businesses = [b for b in businesses if b.get("place_id")]
+    if not valid_businesses:
+        return []
 
+    # Single query: fetch all existing leads by place_id
+    place_ids = [b["place_id"] for b in valid_businesses]
+    existing_leads = {
+        lead.place_id: lead
+        for lead in Lead.objects.filter(place_id__in=place_ids)
+    }
+
+    new_leads_to_create = []
+    leads_to_update = []
+    result_leads = []
+
+    for biz in valid_businesses:
+        pid = biz["place_id"]
         defaults = {
             "name": biz.get("name", ""),
             "niche": niche,
@@ -147,30 +161,45 @@ def _save_businesses_as_leads(
             ),
         }
 
-        if refresh:
-            defaults.update(
-                {
+        if pid in existing_leads:
+            lead = existing_leads[pid]
+            if refresh:
+                # Update existing lead — collect for bulk_update
+                defaults.update({
                     "audit_done": False,
                     "has_ssl": False,
                     "has_meta_title": False,
                     "has_meta_desc": False,
                     "has_schema": False,
                     "has_social": False,
-                }
-            )
-            lead, _ = Lead.objects.update_or_create(
-                place_id=biz["place_id"],
-                defaults=defaults,
-            )
+                })
+                for key, val in defaults.items():
+                    setattr(lead, key, val)
+                leads_to_update.append(lead)
+            result_leads.append(lead)
         else:
-            lead, _ = Lead.objects.get_or_create(
-                place_id=biz["place_id"],
-                defaults=defaults,
-            )
+            # Build new Lead object for bulk_create
+            new_lead = Lead(place_id=pid, **defaults)
+            new_leads_to_create.append(new_lead)
 
-        leads.append(lead)
+    # Bulk update all refreshed leads in one query
+    if leads_to_update:
+        update_fields = list(defaults.keys())
+        Lead.objects.bulk_update(leads_to_update, update_fields)
 
-    return leads
+    # Bulk create all new leads in one query
+    if new_leads_to_create:
+        created_leads = Lead.objects.bulk_create(
+            new_leads_to_create,
+            ignore_conflicts=True,
+        )
+        # bulk_create with ignore_conflicts doesn't set IDs on all DBs,
+        # so re-fetch the created leads to get their IDs
+        new_place_ids = [l.place_id for l in new_leads_to_create]
+        created_with_ids = Lead.objects.filter(place_id__in=new_place_ids)
+        result_leads.extend(list(created_with_ids))
+
+    return result_leads
 
 
 def _fetch_leads_for_city(
@@ -198,20 +227,26 @@ def _fetch_leads_for_city(
         next_start = search_cache.next_start
 
     else:
-        # Layer 1 — Redis (fast path: no SearchCache DB query)
+        # Layer 1 — Redis (fast path: no DB query at all)
         cached_lead_ids = cache.get(cache_key)
         if cached_lead_ids:
             return _leads_by_ids(cached_lead_ids), "redis_cache", None, []
 
         # Layer 2 — DB (exact city match only)
-        db_leads = _query_leads_from_db(niche, city, country)
-        if db_leads.exists():
-            lead_ids = list(db_leads.values_list("id", flat=True))
+        # Use a single query: get IDs directly. If IDs exist, cache them.
+        lead_ids = list(
+            Lead.objects.filter(niche=niche, city__iexact=city)
+            .filter(**({'country__iexact': country} if country else {}))
+            .order_by("-opportunity_score")
+            .values_list("id", flat=True)
+        )
+
+        if lead_ids:
             cache.set(cache_key, lead_ids, timeout=REDIS_CACHE_TTL)
             # Return region-aware results to user (includes state matches)
-            region_leads = _query_leads_with_region(niche, city, country)
+            region_leads = list(_query_leads_with_region(niche, city, country))
             search_cache = _get_search_cache(cache_key)
-            return list(region_leads), "db_cache", search_cache, []
+            return region_leads, "db_cache", search_cache, []
 
         search_cache = _get_search_cache(cache_key)
 
@@ -254,7 +289,6 @@ def _fetch_leads_for_city(
         leads = new_leads
 
     if new_leads:
-        print("FIRING AUDIT FOR:", [lead.id for lead in new_leads])
         audit_leads_batch.delay([lead.id for lead in new_leads])
 
     return list(leads), "google_api", search_cache, new_leads
@@ -301,6 +335,7 @@ class LeadSearchView(APIView):
         if refresh and load_more:
             load_more = False
 
+        # Single eager-loaded query for user + subscription + plan
         user = User.objects.select_related("subscription__plan").get(
             pk=request.user.pk
         )
@@ -327,7 +362,8 @@ class LeadSearchView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        remaining_credits = _get_remaining_quota(user, "search")
+        # Use the centralized quota function (avoids duplicate _get_plan_limit + _get_counter calls)
+        remaining_credits = get_remaining_quota(user, "search")
 
         if remaining_credits == 0:
             return Response(
@@ -420,7 +456,11 @@ class SaveLeadView(APIView):
                 {"error": "Lead not found."}, status=status.HTTP_404_NOT_FOUND
             )
 
-        subscription = getattr(request.user, "subscription", None)
+        # Eager load subscription + plan to avoid 2 lazy-load queries
+        user = User.objects.select_related("subscription__plan").get(
+            pk=request.user.pk
+        )
+        subscription = getattr(user, "subscription", None)
         if subscription:
             limit = subscription.plan.saved_leads_limit
             if limit != -1:
@@ -473,7 +513,7 @@ class SavedLeadsListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        saved_leads = (
+        saved_leads = list(
             SavedLead.objects.filter(user=request.user)
             .select_related("lead")
             .order_by("-saved_at")
@@ -484,6 +524,6 @@ class SavedLeadsListView(APIView):
         )
 
         return Response(
-            {"results": serializer.data, "count": saved_leads.count()},
+            {"results": serializer.data, "count": len(saved_leads)},
             status=status.HTTP_200_OK,
         )

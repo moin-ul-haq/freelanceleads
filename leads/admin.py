@@ -25,6 +25,7 @@ class LeadAdmin(admin.ModelAdmin):
 @admin.register(SavedLead)
 class SavedLeadAdmin(admin.ModelAdmin):
     list_display = ("user", "lead", "saved_at")
+    list_select_related = ("user", "lead")
     search_fields = ("user__email", "lead__name")
 
 

@@ -1,6 +1,5 @@
 from datetime import timedelta
 from dotenv import load_dotenv
-from datetime import timedelta
 
 from pathlib import Path
 import os
@@ -25,6 +24,9 @@ SECRET_KEY = os.environ.get(
 DEBUG = True
 
 ALLOWED_HOSTS = []
+
+# Base URL for the site (used in tracking pixels, email links, etc.)
+SITE_URL = os.environ.get("SITE_URL", "http://localhost:8000").rstrip("/")
 
 
 # Application definition
@@ -151,12 +153,6 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.SessionAuthentication"
     ),
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-}
-
-# JWT ki configurations
-SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
 }
 
 

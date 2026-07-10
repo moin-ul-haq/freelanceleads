@@ -29,16 +29,19 @@ class PlanFeatureAdmin(admin.ModelAdmin):
 @admin.register(UserSubscription)
 class UserSubscriptionAdmin(admin.ModelAdmin):
     list_display = ("user", "plan", "status", "current_period_end", "updated_at")
+    list_select_related = ("user", "plan")
     list_filter = ("status", "plan")
 
 
 @admin.register(UsageCounter)
 class UsageCounterAdmin(admin.ModelAdmin):
     list_display = ("user", "action", "count", "reset_date", "last_used")
+    list_select_related = ("user",)
     list_filter = ("action",)
 
 
 @admin.register(PaymentHistory)
 class PaymentHistoryAdmin(admin.ModelAdmin):
     list_display = ("user", "amount", "currency", "status", "paid_at", "created_at")
+    list_select_related = ("user",)
     list_filter = ("status", "currency")
