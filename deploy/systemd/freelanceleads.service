@@ -1,0 +1,16 @@
+[Unit]
+Description=FreelanceLeads API (gunicorn)
+After=network.target postgresql.service redis-server.service
+
+[Service]
+WorkingDirectory=/root/freelanceleads
+ExecStart=/root/freelanceleads/venv/bin/gunicorn freelanceleads.wsgi:application \
+  --bind 127.0.0.1:8031 \
+  --workers 3 --threads 2 \
+  --timeout 60 \
+  --max-requests 1000 --max-requests-jitter 100
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

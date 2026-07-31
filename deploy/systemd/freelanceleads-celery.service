@@ -1,0 +1,14 @@
+[Unit]
+Description=FreelanceLeads Celery worker
+After=network.target redis-server.service
+
+[Service]
+WorkingDirectory=/root/freelanceleads
+Environment=C_FORCE_ROOT=true
+ExecStart=/root/freelanceleads/venv/bin/celery -A freelanceleads worker \
+  -l info --concurrency 4 --max-tasks-per-child 200
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
