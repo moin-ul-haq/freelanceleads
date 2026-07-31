@@ -11,7 +11,7 @@ from rest_framework import status
 from freelanceleads.quota_guard import check, increment, get_remaining_quota
 from services.serp import search_businesses
 from services.scoring import calculate_score
-from leads.tasks import audit_leads_batch
+from leads.tasks import dispatch_audits
 from .models import Lead, SavedLead, SearchCache
 from .serializers import (
     LeadSerializer,
@@ -289,7 +289,7 @@ def _fetch_leads_for_city(
         leads = new_leads
 
     if new_leads:
-        audit_leads_batch.delay([lead.id for lead in new_leads])
+        dispatch_audits([lead.id for lead in new_leads])
 
     return list(leads), "google_api", search_cache, new_leads
 
@@ -395,6 +395,12 @@ class LeadSearchView(APIView):
                 cities_skipped.insert(0, city)
                 continue
 
+            if source == "api_error":
+                # External API failed — don't charge the user a search credit
+                sources_seen.add(source)
+                cities_skipped.insert(0, city)
+                continue
+
             increment(user, "search")
             cities_searched.append(city)
 
@@ -422,9 +428,40 @@ class LeadSearchView(APIView):
         }
 
         if cities_skipped:
-            response_data["skipped_reason"] = "Insufficient search credits"
+            response_data["skipped_reason"] = (
+                "Lead provider unavailable — no credits were used"
+                if "api_error" in sources_seen
+                else "Insufficient search credits"
+            )
 
         return Response(response_data, status=status.HTTP_200_OK)
+
+
+class LeadStatusView(APIView):
+    """
+    POST /api/leads/status/ {lead_ids: [...]} — returns current state of the
+    given leads (no quota cost). Used by the frontend to poll audit progress
+    so scores and emails fill in live after a search.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        lead_ids = request.data.get("lead_ids", [])
+        if not isinstance(lead_ids, list) or not lead_ids:
+            return Response(
+                {"error": "Provide lead_ids as a non-empty list."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        leads = list(Lead.objects.filter(id__in=lead_ids[:100]))
+        serializer = LeadSerializer(
+            leads, many=True, context=_serializer_context(request, leads)
+        )
+        return Response(
+            {"results": serializer.data, "count": len(leads)},
+            status=status.HTTP_200_OK,
+        )
 
 
 class LeadDetailView(APIView):

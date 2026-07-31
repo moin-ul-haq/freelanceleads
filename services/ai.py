@@ -1,17 +1,44 @@
 # services/ai.py
 #
-# Thin wrapper around OpenAI API.
-# When switching to Claude later — only this file changes.
-# All callers (views, tasks) stay the same.
+# Thin wrapper around the LLM provider. Groq is the primary provider
+# (OpenAI-compatible API); OpenAI works as a fallback when only
+# OPENAI_API_KEY is set. All callers (views, tasks) stay the same.
 
 from openai import OpenAI
 from django.conf import settings
 
-# Single client instance — reused across all calls
-_client = OpenAI(api_key=settings.OPENAI_API_KEY)
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
+OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
 
-MODEL = "gpt-4o-mini"
+# Client is created lazily so the server can boot without an API key —
+# only AI endpoints fail (with a clear message) when the key is missing.
+_client = None
+_model = None
+
 MAX_TOKENS = 1000
+
+
+def _get_client() -> OpenAI:
+    global _client, _model
+    if _client is None:
+        groq_key = getattr(settings, "GROQ_API_KEY", None)
+        if groq_key:
+            _client = OpenAI(api_key=groq_key, base_url=GROQ_BASE_URL)
+            _model = getattr(settings, "AI_MODEL", None) or GROQ_DEFAULT_MODEL
+        elif settings.OPENAI_API_KEY:
+            _client = OpenAI(api_key=settings.OPENAI_API_KEY)
+            _model = getattr(settings, "AI_MODEL", None) or OPENAI_DEFAULT_MODEL
+        else:
+            raise RuntimeError(
+                "AI is not configured: set GROQ_API_KEY (preferred) or OPENAI_API_KEY."
+            )
+    return _client
+
+
+def _get_model() -> str:
+    _get_client()
+    return _model
 
 
 def complete(
@@ -37,8 +64,8 @@ def complete(
         RuntimeError if API call fails.
     """
     try:
-        response = _client.chat.completions.create(
-            model=MODEL,
+        response = _get_client().chat.completions.create(
+            model=_get_model(),
             max_tokens=max_tokens,
             temperature=temperature,
             messages=[
@@ -78,8 +105,8 @@ def chat(
         RuntimeError if API call fails.
     """
     try:
-        response = _client.chat.completions.create(
-            model=MODEL,
+        response = _get_client().chat.completions.create(
+            model=_get_model(),
             max_tokens=max_tokens,
             temperature=temperature,
             messages=messages,
@@ -100,8 +127,8 @@ def complete_json(
     Requires the system prompt to explicitly instruct the model to return JSON.
     """
     try:
-        response = _client.chat.completions.create(
-            model=MODEL,
+        response = _get_client().chat.completions.create(
+            model=_get_model(),
             max_tokens=max_tokens,
             temperature=temperature,
             response_format={"type": "json_object"},

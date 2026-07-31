@@ -42,59 +42,61 @@ The project is modularized into several Django apps:
 ## 🚀 Getting Started (Local Development)
 
 ### Prerequisites
-- Python 3.10+
-- Redis Server (for Celery and Caching)
+- Python 3.12+ (Django 6 requirement)
+- Node.js or Bun (for the React frontend)
+- Redis Server — **optional in dev**: without `REDIS_URL` the backend falls back to an
+  in-process cache and runs Celery tasks eagerly (synchronously), so no broker is needed.
 
-### Installation
+### Backend
 
-1. **Clone the repository**
-   ```bash
-   git clone <repo-url>
-   cd freelanceleads
-   ```
-
-2. **Create a virtual environment and activate it**
+1. **Create a virtual environment and install dependencies**
    ```bash
    python -m venv .venv
-   # Windows
-   .venv\Scripts\activate
-   # macOS/Linux
-   source .venv/bin/activate
-   ```
-
-3. **Install dependencies**
-   ```bash
+   source .venv/bin/activate        # Windows: .venv\Scripts\activate
    pip install -r requirements.txt
    ```
 
-4. **Environment Variables**
-   Create a `.env` file in the root directory (alongside `manage.py`). You will need keys for:
-   - Django `SECRET_KEY`
-   - Stripe API keys
-   - Anthropic API Key
-   - Google Places/PageSpeed API Keys
+2. **Environment variables**
+   Copy `.env.example` to `.env` and fill in what you have. Everything is optional in dev:
+   - `SERP_API_KEY` — SerpAPI key for live lead search (Google Maps)
+   - `OPENAI_API_KEY` — AI pitch/proposal/chat generation
+   - `PAGESPEED_API_KEY` — Google PageSpeed scores in audits
+   - `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` — billing
+   - `FERNET_ENCRYPTION_KEY` — required before connecting outreach email accounts
+   - `FRONTEND_URL` — CORS + Stripe redirects (default `http://localhost:5173`)
 
-5. **Database Setup**
+3. **Database, plans, and demo data**
    ```bash
-   python manage.py makemigrations
    python manage.py migrate
+   python manage.py seed_plans        # free / pro / max plans
+   python manage.py seed_demo_leads   # optional: demo leads so search works without SerpAPI
    ```
 
-6. **Create a Superuser**
+4. **Run the API server**
    ```bash
-   python manage.py createsuperuser
+   python manage.py runserver 8001
    ```
+   API docs: http://localhost:8001/api/docs/ · Health: http://localhost:8001/api/health/
 
-7. **Run the Development Server**
-   ```bash
-   python manage.py runserver
-   ```
-
-8. **Start Celery (in a separate terminal)**
+5. **Celery (only when `REDIS_URL` is set)**
    ```bash
    celery -A freelanceleads worker -l info --pool=solo
+   celery -A freelanceleads beat -l info
    ```
-   *(Note: `--pool=solo` is recommended for Windows development.)*
+
+### Frontend (React + Vite, in `frontend/`)
+
+```bash
+cd frontend
+npm install        # or: bun install
+npm run dev        # or: bun run dev
+```
+
+Open http://localhost:5173 — the dev server proxies `/api` to the backend on port 8001
+(override with `VITE_API_PROXY=http://localhost:<port>`).
+
+Demo searches after `seed_demo_leads`: **plumber / toronto**, **dentist / austin**,
+**electrician / lahore**.
 
 ## 📜 License
 *Proprietary - All rights reserved.*

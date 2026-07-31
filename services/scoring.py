@@ -21,7 +21,7 @@ Score interpretation:
 PROBLEM_WEIGHTS = {
     "no_website": 40,  # Biggest opportunity — build from scratch
     "no_ssl": 15,  # HTTP only
-    # 'slow_pagespeed': 15,  # TODO: enable later — PageSpeed score < 50
+    "slow_pagespeed": 15,  # PageSpeed score < 50 (only when a score was measured)
     "poor_rating": 10,  # Rating < 3.5 stars
     "low_review_count": 10,  # Less than 10 reviews
     "missing_meta": 10,  # No meta title or description
@@ -38,7 +38,7 @@ WARM_LEAD_THRESHOLD = 40
 def calculate_score(
     has_website: bool,
     has_ssl: bool,
-    pagespeed_score: int | None,  # reserved — not used in scoring yet
+    pagespeed_score: int | None,
     rating: float | None,
     review_count: int,
     has_meta_title: bool,
@@ -66,9 +66,8 @@ def calculate_score(
         if not has_schema:
             score += PROBLEM_WEIGHTS["no_schema"]
 
-    # TODO: Uncomment when pagespeed integration is ready
-    # if pagespeed_score is not None and pagespeed_score < 50:
-    #     score += PROBLEM_WEIGHTS['slow_pagespeed']
+        if pagespeed_score is not None and pagespeed_score < 50:
+            score += PROBLEM_WEIGHTS["slow_pagespeed"]
 
     if rating is not None and rating < 3.5:
         score += PROBLEM_WEIGHTS["poor_rating"]
@@ -94,7 +93,7 @@ def get_score_label(score: int) -> str:
 def get_score_reasons(
     has_website: bool,
     has_ssl: bool,
-    pagespeed_score: int | None,  # reserved — not used in scoring yet
+    pagespeed_score: int | None,
     rating: float | None,
     review_count: int,
     has_meta_title: bool,
@@ -121,9 +120,8 @@ def get_score_reasons(
         if not has_schema:
             reasons.append("No schema markup found")
 
-    # TODO: Uncomment when pagespeed integration is ready
-    # if pagespeed_score is not None and pagespeed_score < 50:
-    #     reasons.append(f"Slow website speed (score: {pagespeed_score}/100)")
+        if pagespeed_score is not None and pagespeed_score < 50:
+            reasons.append(f"Slow website speed (score: {pagespeed_score}/100)")
 
     if rating is not None and rating < 3.5:
         reasons.append(f"Poor rating ({rating} stars)")

@@ -3,13 +3,16 @@
 import requests
 import ssl
 import socket
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
 from celery import shared_task
+from django.conf import settings
 from django.db.models import Q
 
 from .models import Lead
 from services.email_finder import find_business_email, _fetch_page, _extract_email_from_html
+from services.pagespeed import get_pagespeed_score
 from services.scoring import calculate_score
 
 AUDIT_META_BYTES = 120_000
@@ -165,16 +168,21 @@ def audit_lead(self, lead_id: int):
         "email": "",
     }
 
-    with ThreadPoolExecutor(max_workers=2) as ex:
+    pagespeed_score = None
+
+    with ThreadPoolExecutor(max_workers=3) as ex:
         futures = {
             ex.submit(_check_ssl, website): "ssl",
             ex.submit(_scrape_website, website): "scrape",
+            ex.submit(get_pagespeed_score, website): "pagespeed",
         }
         for future in as_completed(futures):
             key = futures[future]
             try:
                 if key == "ssl":
                     has_ssl = future.result()
+                elif key == "pagespeed":
+                    pagespeed_score = future.result()
                 else:
                     scraped = future.result()
             except Exception:
@@ -184,7 +192,7 @@ def audit_lead(self, lead_id: int):
     score = calculate_score(
         has_website=lead.has_website,
         has_ssl=has_ssl,
-        pagespeed_score=None,  # added later with PageSpeed API
+        pagespeed_score=pagespeed_score,
         rating=lead.rating,
         review_count=lead.review_count,
         has_meta_title=scraped["has_meta_title"],
@@ -194,6 +202,7 @@ def audit_lead(self, lead_id: int):
     )
 
     # Save permanently to DB — next time lead comes from cache/DB, no audit needed
+    lead.pagespeed_score = pagespeed_score
     lead.has_ssl = has_ssl
     lead.has_meta_title = scraped["has_meta_title"]
     lead.has_meta_desc = scraped["has_meta_desc"]
@@ -224,9 +233,13 @@ def audit_leads_batch(lead_ids: list[int]):
     """
     Fires individual audit_lead tasks for a batch of leads.
     Only queues leads that have not been audited yet — saves Celery queue space.
+
+    With a real broker each lead becomes its own Celery task (workers parallelize).
+    In eager mode (no Redis) we parallelize locally with a thread pool instead of
+    running 20 sequential audits.
     """
     # Queue new audits and backfill email for audited leads that still have no email
-    pending_ids = (
+    pending_ids = list(
         Lead.objects.filter(id__in=lead_ids)
         .filter(
             Q(audit_done=False)
@@ -235,5 +248,37 @@ def audit_leads_batch(lead_ids: list[int]):
         .values_list("id", flat=True)
     )
 
-    for lead_id in pending_ids:
-        audit_lead.delay(lead_id)
+    if not pending_ids:
+        return
+
+    if getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False):
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            list(ex.map(_audit_lead_safe, pending_ids))
+    else:
+        for lead_id in pending_ids:
+            audit_lead.delay(lead_id)
+
+
+def _audit_lead_safe(lead_id: int):
+    """Run one audit, never letting an exception kill the batch pool."""
+    try:
+        audit_lead(lead_id)
+    except Exception:
+        pass
+
+
+def dispatch_audits(lead_ids: list[int]):
+    """
+    Entry point for views: never blocks the request.
+    - Broker mode: hand off to Celery.
+    - Eager mode: run the batch in a daemon thread so the API responds instantly
+      while audits fill in scores/emails in the background.
+    """
+    if not lead_ids:
+        return
+    if getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False):
+        threading.Thread(
+            target=audit_leads_batch, args=(lead_ids,), daemon=True
+        ).start()
+    else:
+        audit_leads_batch.delay(lead_ids)

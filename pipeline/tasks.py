@@ -1,4 +1,6 @@
 from celery import shared_task
+from django.conf import settings
+from django.core.mail import send_mail
 from django.utils import timezone
 import pytz
 from django.contrib.auth import get_user_model
@@ -50,14 +52,37 @@ def send_hourly_follow_up_reminders():
             stage__system_key__in=['closed_won', 'closed_lost']
         ).select_related('lead', 'stage')
         
-        for lead in leads_to_remind:
-            # Here we would send the email. 
-            # send_mail(...)
-            
-            # Log the activity
+        leads_to_remind = list(leads_to_remind)
+        if not leads_to_remind:
+            continue
+
+        lines = []
+        for pl in leads_to_remind:
+            business = pl.lead.name if pl.lead else "Unknown business"
+            stage = pl.stage.name if pl.stage else "—"
+            deal = f" (deal: ${pl.deal_value})" if pl.deal_value else ""
+            lines.append(f"- {business} — stage: {stage}{deal}")
+
+        try:
+            send_mail(
+                subject=f"FreelanceLeads: {len(leads_to_remind)} follow-up(s) due today",
+                message=(
+                    "You have follow-ups scheduled for today:\n\n"
+                    + "\n".join(lines)
+                    + f"\n\nOpen your pipeline: {settings.FRONTEND_URL}/pipeline"
+                ),
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+                fail_silently=False,
+            )
+        except Exception:
+            # Don't log "sent" if the email failed — try again next run
+            continue
+
+        for pl in leads_to_remind:
             ActivityLog.objects.create(
                 user=user,
-                pipeline_lead=lead,
+                pipeline_lead=pl,
                 action="Follow-up reminder sent"
             )
 

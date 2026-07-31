@@ -331,7 +331,7 @@ def _fetch_page(url: str) -> tuple[bytes, str]:
         try:
             response = requests.get(
                 candidate,
-                timeout=12,
+                timeout=(4, 8),  # connect, read — dead hosts fail fast
                 headers=FETCH_HEADERS,
                 stream=True,
                 allow_redirects=True,

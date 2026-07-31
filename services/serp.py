@@ -30,6 +30,11 @@ def search_businesses(
 
     Returns normalized list of business dicts ready to save in Lead model.
     """
+    if not settings.SERP_API_KEY:
+        raise RuntimeError(
+            "Lead search is not configured: set SERP_API_KEY in the environment."
+        )
+
     query = f"{niche} in {city}"
     params = {
         "engine": "google_maps",
