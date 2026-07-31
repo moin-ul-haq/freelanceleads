@@ -41,6 +41,31 @@ def _get_model() -> str:
     return _model
 
 
+# Typography the models sneak in despite instructions — customer-facing copy
+# must read as typed by a human, not typeset.
+_PUNCT_MAP = str.maketrans({
+    "‘": "'", "’": "'",   # curly single quotes
+    "“": '"', "”": '"',   # curly double quotes
+    "‑": "-", "‐": "-",   # unicode hyphens
+    "–": "-",                   # en dash
+    "—": ", ",                  # em dash → comma
+    " ": " ",                   # non-breaking space
+})
+
+
+def clean_typography(text: str) -> str:
+    """Normalizes AI-emitted typography to plain human-typed punctuation."""
+    import re
+
+    if not text:
+        return text
+    text = text.translate(_PUNCT_MAP)
+    text = re.sub(r"[ \t]+,", ",", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    lines = [line.rstrip() for line in text.splitlines()]
+    return "\n".join(lines).strip()
+
+
 def complete(
     system_prompt: str,
     user_prompt: str,

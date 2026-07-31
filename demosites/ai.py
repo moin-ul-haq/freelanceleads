@@ -8,7 +8,7 @@
 
 import json
 
-from services.ai import complete_json
+from services.ai import complete_json, clean_typography
 
 SITE_SYSTEM_PROMPT = """
 You write website copy for a one-page site for a local business. The copy is a DEMO the freelancer shows the business owner, so it must feel like it was written specifically for that business and be believable to the owner.
@@ -43,16 +43,83 @@ Rules:
 - If the freelancer supplied extra_info, weave those facts naturally into about/why_us — these are real facts from the business.
 - If rating >= 4 and review_count > 0 you may reference it ("rated X stars by our customers"). Otherwise never mention ratings or reviews.
 - NEVER invent: years in business, certifications, awards, team size, guarantees, customer quotes, or specific prices. FAQ answers must not promise prices or timelines.
-- Plain, confident, local-business language. 6th-grade words. No hype ("world-class", "premier", "unmatched"), no em dashes.
+- Plain, confident, local-business language. 6th-grade words. No hype words ("world-class", "premier", "unmatched", "unparalleled", "elevate", "unlock"), no em dashes.
 - Match the requested copy tone. "auto" means: pick what fits the niche (e.g. warm for a salon, reassuring for a plumber, energetic for a gym).
 """.strip()
 
-REQUIRED_KEYS = (
-    "headline", "tagline", "hero_points", "about_p1", "about_p2", "services",
-    "why_us", "process", "faq", "service_area", "cta_headline", "cta_text",
+REQUIRED_TEXT_KEYS = (
+    "headline", "tagline", "about_p1", "about_p2",
+    "service_area", "cta_headline", "cta_text",
+)
+
+# (key, exact count rendered, minimum acceptable, item shape)
+LIST_SPECS = (
+    ("hero_points", 3, 2, str),
+    ("services", 6, 4, {"name", "description"}),
+    ("why_us", 4, 3, {"title", "text"}),
+    ("process", 3, 3, {"title", "text"}),
+    ("faq", 4, 3, {"q", "a"}),
 )
 
 TONES = ("auto", "friendly", "professional", "bold", "luxury", "playful")
+
+BANNED_WORDS = ("world-class", "premier", "unmatched", "unparalleled", "elevate", "unlock")
+
+
+def _validate(content: dict) -> list[str]:
+    """Returns a list of concrete problems — empty list means ship it."""
+    problems = []
+
+    for key in REQUIRED_TEXT_KEYS:
+        val = content.get(key)
+        if not isinstance(val, str) or len(val.strip()) < 8:
+            problems.append(f"'{key}' is missing or too short")
+
+    headline = content.get("headline") or ""
+    if isinstance(headline, str) and len(headline.split()) > 12:
+        problems.append("'headline' is longer than 12 words")
+
+    for key, _want, minimum, shape in LIST_SPECS:
+        items = content.get(key)
+        if not isinstance(items, list) or len(items) < minimum:
+            problems.append(f"'{key}' needs at least {minimum} items")
+            continue
+        for item in items:
+            if shape is str:
+                if not isinstance(item, str) or not item.strip():
+                    problems.append(f"'{key}' contains an empty entry")
+                    break
+            else:
+                if not isinstance(item, dict) or not shape.issubset(item) or any(
+                    not str(item.get(f, "")).strip() for f in shape
+                ):
+                    problems.append(f"'{key}' items must all have non-empty {sorted(shape)}")
+                    break
+
+    lowered = json.dumps(content).lower()
+    hits = [w for w in BANNED_WORDS if w in lowered]
+    if hits:
+        problems.append(f"remove hype words: {hits}")
+
+    return problems
+
+
+def _normalize(content: dict) -> dict:
+    """Trims lists to the exact rendered counts and cleans typography everywhere."""
+
+    def clean(value):
+        if isinstance(value, str):
+            return clean_typography(value)
+        if isinstance(value, list):
+            return [clean(v) for v in value]
+        if isinstance(value, dict):
+            return {k: clean(v) for k, v in value.items()}
+        return value
+
+    content = clean(content)
+    for key, want, _minimum, _shape in LIST_SPECS:
+        content[key] = content[key][:want]
+    return content
 
 
 def generate_site_content(lead, tone: str = "auto", services_hint: str = "", extra_info: str = "") -> dict:
@@ -73,15 +140,39 @@ def generate_site_content(lead, tone: str = "auto", services_hint: str = "", ext
     if extra_info.strip():
         payload["extra_info"] = extra_info.strip()[:1000]
 
-    raw = complete_json(
-        system_prompt=SITE_SYSTEM_PROMPT,
-        user_prompt=json.dumps(payload, indent=2),
-        temperature=0.7,
-        max_tokens=2800,
-    )
-    content = json.loads(raw)
+    user_prompt = json.dumps(payload, indent=2)
+    problems = ["not generated yet"]
+    content = None
 
-    missing = [k for k in REQUIRED_KEYS if k not in content]
-    if missing:
-        raise RuntimeError(f"AI returned incomplete site content (missing {missing})")
-    return content
+    # Two attempts: the retry feeds the validator's complaints back to the
+    # model so the second pass fixes exactly what was wrong.
+    for attempt in range(2):
+        try:
+            raw = complete_json(
+                system_prompt=SITE_SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                temperature=0.7 if attempt == 0 else 0.4,
+                max_tokens=2800,
+            )
+            content = json.loads(raw)
+        except Exception:
+            content = None
+            problems = ["previous response was not valid JSON"]
+            continue
+
+        problems = _validate(content)
+        if not problems:
+            break
+        user_prompt = (
+            json.dumps(payload, indent=2)
+            + "\n\nYour previous attempt had these problems, fix ALL of them:\n- "
+            + "\n- ".join(problems)
+        )
+
+    if problems:
+        raise RuntimeError(
+            "AI couldn't produce complete site content, please try again. "
+            f"(issues: {problems[:3]})"
+        )
+
+    return _normalize(content)
