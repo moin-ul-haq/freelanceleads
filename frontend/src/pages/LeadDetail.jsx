@@ -4,6 +4,7 @@ import { api, errorMessage } from '../api/client'
 import { PageHeader, Card, Button, Spinner, Alert, ScoreBadge } from '../components/ui'
 import PitchModal from '../components/PitchModal'
 import AddToPipelineModal from '../components/AddToPipelineModal'
+import GenerateSiteModal from '../components/GenerateSiteModal'
 
 const EMAIL_STATUS = {
   deliverable: { label: '✓ deliverable', cls: 'bg-emerald-100 text-emerald-700' },
@@ -20,7 +21,7 @@ export default function LeadDetail() {
   const [showPipeline, setShowPipeline] = useState(false)
   const [verifying, setVerifying] = useState(false)
   const [site, setSite] = useState(null)
-  const [siteBusy, setSiteBusy] = useState(false)
+  const [showSiteWizard, setShowSiteWizard] = useState(false)
 
   function load() {
     api.get(`/leads/${id}/`).then(setLead).catch((err) => setError(errorMessage(err)))
@@ -43,19 +44,6 @@ export default function LeadDetail() {
       setError(errorMessage(err))
     } finally {
       setVerifying(false)
-    }
-  }
-
-  async function generateSite(regenerate = false) {
-    setSiteBusy(true)
-    setError('')
-    try {
-      const res = await api.post('/sites/generate/', { lead_id: lead.id, regenerate })
-      setSite(res)
-    } catch (err) {
-      setError(errorMessage(err, 'Site generation failed'))
-    } finally {
-      setSiteBusy(false)
     }
   }
 
@@ -91,9 +79,7 @@ export default function LeadDetail() {
       >
         <Button variant="secondary" onClick={toggleSave}>{lead.is_saved ? '⭐ Saved' : '☆ Save'}</Button>
         <Button variant="secondary" onClick={() => setShowPipeline(true)}>📋 Add to pipeline</Button>
-        <Button variant="secondary" onClick={() => generateSite(false)} disabled={siteBusy}>
-          {siteBusy ? <Spinner className="h-4 w-4" /> : '🌐 Demo site'}
-        </Button>
+        <Button variant="secondary" onClick={() => setShowSiteWizard(true)}>🌐 Build site</Button>
         <Button onClick={() => setShowPitch(true)}>🤖 Generate pitch</Button>
       </PageHeader>
 
@@ -105,7 +91,7 @@ export default function LeadDetail() {
           </a>
           <div className="ml-auto flex gap-2">
             <Button variant="secondary" className="!px-2 !py-1 text-xs" onClick={() => navigator.clipboard.writeText(site.url)}>Copy link</Button>
-            <Button variant="secondary" className="!px-2 !py-1 text-xs" onClick={() => generateSite(true)} disabled={siteBusy}>Regenerate</Button>
+            <Button variant="secondary" className="!px-2 !py-1 text-xs" onClick={() => setShowSiteWizard(true)}>Regenerate</Button>
           </div>
         </div>
       )}
@@ -214,6 +200,12 @@ export default function LeadDetail() {
 
       <PitchModal lead={showPitch ? lead : null} open={showPitch} onClose={() => setShowPitch(false)} />
       <AddToPipelineModal lead={showPipeline ? lead : null} open={showPipeline} onClose={() => setShowPipeline(false)} />
+      <GenerateSiteModal
+        lead={lead}
+        open={showSiteWizard}
+        onClose={() => setShowSiteWizard(false)}
+        onGenerated={setSite}
+      />
     </div>
   )
 }
