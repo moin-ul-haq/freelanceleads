@@ -24,37 +24,103 @@ SERVICE_LABELS = {
 
 def _build_audit_summary(lead) -> dict:
     """
-    Returns a compact dictionary of audit data to minimize tokens.
+    Compact audit dict for the prompt. Issues are ordered by pitch priority
+    (most painful first) and each carries a plain-language, customer-facing
+    consequence so the model anchors on lost customers, not tech jargon.
     """
     data = {
         "name": lead.name,
         "niche": lead.niche,
-        "location": f"{lead.city}, {lead.country}",
+        "location": f"{lead.city}, {lead.country}".rstrip(", "),
         "website": lead.website or None,
     }
-    
+
+    # Positive facts — opener material ("people clearly find you on Google")
+    facts = []
+    if lead.rating is not None and lead.review_count:
+        facts.append(
+            f"Google listing has {lead.review_count} reviews at {lead.rating} stars"
+        )
+    data["facts"] = facts
+
+    # (issue, consequence) in strict pitch-priority order
     issues = []
     if not lead.has_website:
-        issues.append("No website")
+        issues.append({
+            "issue": "No website",
+            "consequence": (
+                "people find them on Google Maps, then have nowhere to go, "
+                "so they call a competitor that has a site"
+            ),
+        })
     else:
-        if not lead.has_ssl: issues.append("No SSL")
         if lead.pagespeed_score is not None and lead.pagespeed_score < 50:
-            issues.append(f"PageSpeed: {lead.pagespeed_score}")
+            issues.append({
+                "issue": f"Very slow website (speed score {lead.pagespeed_score}/100)",
+                "consequence": (
+                    "the site is painfully slow to open on a phone, "
+                    "most visitors give up before it loads"
+                ),
+            })
+        if not lead.has_ssl:
+            issues.append({
+                "issue": "Site served over plain HTTP",
+                "consequence": (
+                    "Chrome shows a 'Not Secure' warning next to their name "
+                    "to every visitor"
+                ),
+            })
         if not lead.has_meta_title or not lead.has_meta_desc:
-            issues.append("Missing meta tags")
-        if not lead.has_schema: issues.append("No schema")
-        
+            issues.append({
+                "issue": "Page title/description missing",
+                "consequence": (
+                    f"the site barely shows up when locals search "
+                    f"'{lead.niche} near me', so searchers pick a competitor "
+                    "they can actually find"
+                ),
+            })
+        if not lead.has_schema:
+            issues.append({
+                "issue": "No structured data",
+                "consequence": (
+                    "Google can't show their hours, reviews or services in "
+                    "search results the way it does for competitors"
+                ),
+            })
+
     if lead.rating is not None and lead.rating < 3.5:
-        issues.append(f"Rating: {lead.rating}")
+        issues.append({
+            "issue": f"Low rating ({lead.rating} stars)",
+            "consequence": (
+                "locals comparing options on the map pick the higher-rated "
+                "competitor next to them"
+            ),
+        })
     if lead.review_count is not None and lead.review_count < 10:
-        issues.append(f"Reviews: {lead.review_count}")
+        issues.append({
+            "issue": f"Only {lead.review_count} Google reviews",
+            "consequence": (
+                "businesses with more reviews rank above them in the map "
+                "results and look more trustworthy"
+            ),
+        })
     if not lead.has_social:
-        issues.append("No social media")
-        
+        issues.append({
+            "issue": "No social media presence",
+            "consequence": "customers who check for an active page find nothing",
+        })
+
     if not issues:
-        issues.append("General online presence improvement needed")
-        
-    data["issues"] = issues
+        issues.append({
+            "issue": "Solid basics, room to grow",
+            "consequence": (
+                "they're doing fine, the pitch angle is helping them pull "
+                "ahead of local competitors, not fixing something broken"
+            ),
+        })
+
+    data["primary_issue"] = issues[0]
+    data["other_issues"] = issues[1:]
     return data
 
 def generate_pitch(lead, tone: str = "professional", sender_name: str = "Alex") -> str:
