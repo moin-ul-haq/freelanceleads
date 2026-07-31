@@ -4,6 +4,7 @@
 # ═══════════════════════════════════════════════════════════════
 
 import json
+import re
 from services.ai import complete, complete_json
 from ai_engine.prompts import PITCH_SYSTEM_PROMPT, BULK_PITCH_SYSTEM_PROMPT, PROPOSAL_SYSTEM_PROMPT
 
@@ -23,7 +24,9 @@ def _clean_copy(text: str) -> str:
     if not text:
         return text
     text = text.translate(_PUNCT_MAP)
-    # collapse the double-space artifacts some models emit at line ends
+    # collapse spacing artifacts left by the substitutions above
+    text = re.sub(r"[ \t]+,", ",", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
     lines = [line.rstrip() for line in text.splitlines()]
     return "\n".join(lines).strip()
 
