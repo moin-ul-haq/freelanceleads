@@ -7,6 +7,27 @@ import json
 from services.ai import complete, complete_json
 from ai_engine.prompts import PITCH_SYSTEM_PROMPT, BULK_PITCH_SYSTEM_PROMPT, PROPOSAL_SYSTEM_PROMPT
 
+# Normalize typography the model sneaks in despite instructions —
+# cold emails must read as typed by a human, not typeset.
+_PUNCT_MAP = str.maketrans({
+    "‘": "'", "’": "'",   # curly single quotes
+    "“": '"', "”": '"',   # curly double quotes
+    "‑": "-", "‐": "-",   # unicode hyphens
+    "–": "-",                   # en dash
+    "—": ", ",                  # em dash → comma
+    " ": " ",                   # non-breaking space
+})
+
+
+def _clean_copy(text: str) -> str:
+    if not text:
+        return text
+    text = text.translate(_PUNCT_MAP)
+    # collapse the double-space artifacts some models emit at line ends
+    lines = [line.rstrip() for line in text.splitlines()]
+    return "\n".join(lines).strip()
+
+
 TONE_LABELS = {
     "professional": "professional and polished",
     "friendly": "warm and conversational",
@@ -133,11 +154,11 @@ def generate_pitch(lead, tone: str = "professional", sender_name: str = "Alex") 
         "sender_name": sender_name
     }, indent=2)
 
-    return complete(
+    return _clean_copy(complete(
         system_prompt=PITCH_SYSTEM_PROMPT,
         user_prompt=user_prompt,
-        temperature=0.8,
-    )
+        temperature=0.7,
+    ))
 
 def generate_bulk_pitches(
     leads: list, tone: str = "professional", sender_name: str = "Alex"
@@ -181,7 +202,7 @@ def generate_bulk_pitches(
                 if lead.id in pitches_by_id:
                     results.append({
                         "lead_id": lead.id,
-                        "pitch": pitches_by_id[lead.id],
+                        "pitch": _clean_copy(pitches_by_id[lead.id]),
                         "error": None
                     })
                 else:
@@ -215,8 +236,8 @@ def generate_proposal(
         "price_range": price_range,
     }, indent=2)
 
-    return complete(
+    return _clean_copy(complete(
         system_prompt=PROPOSAL_SYSTEM_PROMPT,
         user_prompt=user_prompt,
         temperature=0.7,
-    )
+    ))
