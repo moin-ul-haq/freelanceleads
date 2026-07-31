@@ -30,6 +30,9 @@ class Lead(models.Model):
     phone = models.CharField(max_length=50, blank=True)
     website = models.URLField(blank=True)
     email = models.EmailField(blank=True)
+    # SMTP-level deliverability: unchecked/deliverable/risky/undeliverable/unknown
+    email_status = models.CharField(max_length=15, default="unchecked", blank=True)
+    email_checked_at = models.DateTimeField(null=True, blank=True)
     latitude = models.FloatField(null=True, blank=True)
     longitude = models.FloatField(null=True, blank=True)
 

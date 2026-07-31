@@ -5,12 +5,22 @@ import { PageHeader, Card, Button, Spinner, Alert, ScoreBadge } from '../compone
 import PitchModal from '../components/PitchModal'
 import AddToPipelineModal from '../components/AddToPipelineModal'
 
+const EMAIL_STATUS = {
+  deliverable: { label: '✓ deliverable', cls: 'bg-emerald-100 text-emerald-700' },
+  risky: { label: '⚠ risky (catch-all)', cls: 'bg-amber-100 text-amber-700' },
+  undeliverable: { label: '✗ undeliverable', cls: 'bg-red-100 text-red-700' },
+  unknown: { label: '? unverified', cls: 'bg-slate-100 text-slate-500' },
+}
+
 export default function LeadDetail() {
   const { id } = useParams()
   const [lead, setLead] = useState(null)
   const [error, setError] = useState('')
   const [showPitch, setShowPitch] = useState(false)
   const [showPipeline, setShowPipeline] = useState(false)
+  const [verifying, setVerifying] = useState(false)
+  const [site, setSite] = useState(null)
+  const [siteBusy, setSiteBusy] = useState(false)
 
   function load() {
     api.get(`/leads/${id}/`).then(setLead).catch((err) => setError(errorMessage(err)))
@@ -23,6 +33,31 @@ export default function LeadDetail() {
     const t = setInterval(load, 3000)
     return () => clearInterval(t)
   }, [lead?.audit_done, id])
+
+  async function verifyEmail() {
+    setVerifying(true)
+    try {
+      const res = await api.post(`/leads/${lead.id}/verify-email/`)
+      setLead((l) => ({ ...l, email_status: res.email_status }))
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setVerifying(false)
+    }
+  }
+
+  async function generateSite(regenerate = false) {
+    setSiteBusy(true)
+    setError('')
+    try {
+      const res = await api.post('/sites/generate/', { lead_id: lead.id, regenerate })
+      setSite(res)
+    } catch (err) {
+      setError(errorMessage(err, 'Site generation failed'))
+    } finally {
+      setSiteBusy(false)
+    }
+  }
 
   async function toggleSave() {
     try {
@@ -56,8 +91,24 @@ export default function LeadDetail() {
       >
         <Button variant="secondary" onClick={toggleSave}>{lead.is_saved ? '⭐ Saved' : '☆ Save'}</Button>
         <Button variant="secondary" onClick={() => setShowPipeline(true)}>📋 Add to pipeline</Button>
+        <Button variant="secondary" onClick={() => generateSite(false)} disabled={siteBusy}>
+          {siteBusy ? <Spinner className="h-4 w-4" /> : '🌐 Demo site'}
+        </Button>
         <Button onClick={() => setShowPitch(true)}>🤖 Generate pitch</Button>
       </PageHeader>
+
+      {site && (
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+          <span className="text-sm font-semibold text-emerald-800">🌐 Demo site ready:</span>
+          <a href={site.url} target="_blank" rel="noreferrer" className="text-sm font-medium text-emerald-700 underline">
+            {site.url}
+          </a>
+          <div className="ml-auto flex gap-2">
+            <Button variant="secondary" className="!px-2 !py-1 text-xs" onClick={() => navigator.clipboard.writeText(site.url)}>Copy link</Button>
+            <Button variant="secondary" className="!px-2 !py-1 text-xs" onClick={() => generateSite(true)} disabled={siteBusy}>Regenerate</Button>
+          </div>
+        </div>
+      )}
 
       <Link to="/leads" className="mb-4 inline-block text-sm text-indigo-600 hover:underline">← Back to search</Link>
 
@@ -99,9 +150,25 @@ export default function LeadDetail() {
           <h3 className="mb-3 text-sm font-semibold text-slate-900">Contact</h3>
           <dl className="space-y-2.5 text-sm">
             <ContactRow label="Email">
-              {lead.email
-                ? <a href={`mailto:${lead.email}`} className="font-medium text-indigo-600 hover:underline">{lead.email}</a>
-                : <span className="text-slate-400">{lead.audit_done ? 'not found' : 'searching…'}</span>}
+              {lead.email ? (
+                <span className="flex flex-wrap items-center gap-2">
+                  <a href={`mailto:${lead.email}`} className="font-medium text-indigo-600 hover:underline">{lead.email}</a>
+                  {EMAIL_STATUS[lead.email_status] && (
+                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${EMAIL_STATUS[lead.email_status].cls}`}>
+                      {EMAIL_STATUS[lead.email_status].label}
+                    </span>
+                  )}
+                  <button
+                    onClick={verifyEmail}
+                    disabled={verifying}
+                    className="text-xs text-slate-400 underline hover:text-indigo-600"
+                  >
+                    {verifying ? 'checking…' : 'verify'}
+                  </button>
+                </span>
+              ) : (
+                <span className="text-slate-400">{lead.audit_done ? 'not found' : 'searching…'}</span>
+              )}
             </ContactRow>
             <ContactRow label="Phone">
               {lead.phone || <span className="text-slate-400">—</span>}

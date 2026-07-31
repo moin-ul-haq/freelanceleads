@@ -465,6 +465,32 @@ class LeadStatusView(APIView):
         )
 
 
+class VerifyEmailView(APIView):
+    """POST /api/leads/<id>/verify-email/ — on-demand deliverability re-check."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, lead_id):
+        from leads.tasks import _verify_lead_email
+
+        try:
+            lead = Lead.objects.get(id=lead_id)
+        except Lead.DoesNotExist:
+            return Response({"error": "Lead not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not lead.email:
+            return Response(
+                {"error": "This lead has no email address."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        _verify_lead_email(lead)
+        return Response(
+            {"email": lead.email, "email_status": lead.email_status},
+            status=status.HTTP_200_OK,
+        )
+
+
 class LeadDetailView(APIView):
     permission_classes = [IsAuthenticated]
 

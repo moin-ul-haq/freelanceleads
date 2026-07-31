@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     "ai_engine",
     "pipeline",
     "outreach",
+    "demosites",
 ]
 
 MIDDLEWARE = [

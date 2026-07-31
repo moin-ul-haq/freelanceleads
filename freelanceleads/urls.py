@@ -12,9 +12,13 @@ def health(request):
     return JsonResponse({"status": "ok"})
 
 
+from demosites.views import public_site
+
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/health/", health),
+    path("api/sites/", include("demosites.urls")),
+    path("sites/<slug:slug>/", public_site, name="public-demo-site"),
     path("api/auth/", include("accounts.urls")),
     path("api/billing/", include("billing.urls")),
     path("api/leads/", include("leads.urls")),

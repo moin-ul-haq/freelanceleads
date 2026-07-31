@@ -7,6 +7,7 @@ from .views import (
     SavedLeadsListView,
     LeadDetailView,
     LeadStatusView,
+    VerifyEmailView,
 )
 
 urlpatterns = [
@@ -15,4 +16,5 @@ urlpatterns = [
     path("saved/", SavedLeadsListView.as_view()),  # GET
     path("<int:lead_id>/", LeadDetailView.as_view()),  # GET
     path("<int:lead_id>/save/", SaveLeadView.as_view()),  # POST + DELETE
+    path("<int:lead_id>/verify-email/", VerifyEmailView.as_view()),  # POST
 ]

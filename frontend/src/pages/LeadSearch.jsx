@@ -270,11 +270,14 @@ export function LeadsTable({ leads, selected, onSelect, onSave, onPitch, onPipel
                     <span className="rounded bg-red-50 px-1.5 py-0.5 text-xs font-medium text-red-600">none</span>
                   )}
                 </td>
-                <td className="max-w-[200px] px-4 py-3">
+                <td className="max-w-[210px] px-4 py-3">
                   {lead.email ? (
-                    <a href={`mailto:${lead.email}`} className="block truncate font-medium text-emerald-700 hover:underline" title={lead.email}>
-                      {lead.email}
-                    </a>
+                    <span className="flex items-center gap-1.5">
+                      <EmailStatusDot status={lead.email_status} />
+                      <a href={`mailto:${lead.email}`} className="block truncate font-medium text-emerald-700 hover:underline" title={lead.email}>
+                        {lead.email}
+                      </a>
+                    </span>
                   ) : lead.audit_done ? (
                     <span className="text-xs text-slate-400">not found</span>
                   ) : (
@@ -298,6 +301,17 @@ export function LeadsTable({ leads, selected, onSelect, onSave, onPitch, onPipel
       </div>
     </Card>
   )
+}
+
+export function EmailStatusDot({ status }) {
+  const map = {
+    deliverable: ['bg-emerald-500', 'Deliverable — mailbox verified'],
+    risky: ['bg-amber-400', 'Risky — catch-all domain, may bounce'],
+    undeliverable: ['bg-red-500', 'Undeliverable — mailbox rejected'],
+    unknown: ['bg-slate-300', 'Could not verify'],
+  }
+  const [cls, title] = map[status] || ['bg-slate-200', 'Not checked yet']
+  return <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${cls}`} title={title} />
 }
 
 function IconBtn({ children, ...props }) {

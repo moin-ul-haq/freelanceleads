@@ -10,8 +10,11 @@ from celery import shared_task
 from django.conf import settings
 from django.db.models import Q
 
+from django.utils import timezone
+
 from .models import Lead
 from services.email_finder import find_business_email, _fetch_page, _extract_email_from_html
+from services.email_verify import verify_email
 from services.pagespeed import get_pagespeed_score
 from services.scoring import calculate_score
 
@@ -114,6 +117,18 @@ def _audit_website(url: str) -> dict:
     return result
 
 
+def _verify_lead_email(lead: Lead) -> None:
+    """Runs the SMTP deliverability check and stores the result."""
+    if not lead.email:
+        return
+    try:
+        lead.email_status = verify_email(lead.email)
+    except Exception:
+        lead.email_status = "unknown"
+    lead.email_checked_at = timezone.now()
+    lead.save(update_fields=["email_status", "email_checked_at"])
+
+
 def _enrich_lead_email(lead: Lead) -> bool:
     """Try to find and save email for a lead that already has audit_done=True."""
     if lead.email or not lead.website:
@@ -124,7 +139,9 @@ def _enrich_lead_email(lead: Lead) -> bool:
         return False
 
     lead.email = email
-    lead.save(update_fields=["email", "updated_at"])
+    lead.email_status = "unchecked"
+    lead.save(update_fields=["email", "email_status", "updated_at"])
+    _verify_lead_email(lead)
     return True
 
 
@@ -231,11 +248,16 @@ def audit_lead(self, lead_id: int):
         "audit_done",
         "updated_at",
     ]
-    if scraped.get("email") and not lead.email:
+    email_found = bool(scraped.get("email")) and not lead.email
+    if email_found:
         lead.email = scraped["email"]
         update_fields.append("email")
 
     lead.save(update_fields=update_fields)
+
+    # Deliverability check after the audit is stored — never blocks scoring
+    if email_found or (lead.email and lead.email_status == "unchecked"):
+        _verify_lead_email(lead)
 
 
 @shared_task
