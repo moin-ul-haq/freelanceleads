@@ -11,6 +11,7 @@ from outreach.views import (
     TrackingPixelView,
     GoogleAuthURLView,
     GoogleCallbackView,
+    SendEmailView,
 )
 
 urlpatterns = [
@@ -25,5 +26,6 @@ urlpatterns = [
     path('track/<str:message_id>.gif', TrackingPixelView.as_view(), name='outreach-track'),
     path('google/auth-url/', GoogleAuthURLView.as_view(), name='outreach-google-auth'),
     path('google/callback/', GoogleCallbackView.as_view(), name='outreach-google-callback'),
+    path('send-email/', SendEmailView.as_view(), name='outreach-send-email'),
 ]
 

@@ -17,7 +17,7 @@ class GeneratePitchSerializer(serializers.Serializer):
         default="professional",
         required=False,
     )
-    sender_name = serializers.CharField(max_length=50, default="Alex", required=False)
+    sender_name = serializers.CharField(max_length=50, required=False, allow_blank=True, default="")
 
 
 class BulkGeneratePitchSerializer(serializers.Serializer):
@@ -33,7 +33,7 @@ class BulkGeneratePitchSerializer(serializers.Serializer):
         default="professional",
         required=False,
     )
-    sender_name = serializers.CharField(max_length=50, default="Alex", required=False)
+    sender_name = serializers.CharField(max_length=50, required=False, allow_blank=True, default="")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -68,7 +68,7 @@ class GenerateProposalSerializer(serializers.Serializer):
     """POST /api/ai/generate-proposal/"""
 
     lead_id = serializers.IntegerField()
-    sender_name = serializers.CharField(max_length=100, default="Alex", required=False)
+    sender_name = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
     service_type = serializers.ChoiceField(
         choices=["web_design", "seo", "gbp_optimization", "social_media", "full_package"],
         default="web_design",

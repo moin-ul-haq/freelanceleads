@@ -58,7 +58,11 @@ class GeneratePitchView(APIView):
 
         lead_id = serializer.validated_data["lead_id"]
         tone = serializer.validated_data["tone"]
-        sender_name = serializer.validated_data["sender_name"]
+        sender_name = (
+            serializer.validated_data.get("sender_name")
+            or request.user.first_name
+            or request.user.username
+        )
 
         try:
             lead = Lead.objects.get(id=lead_id)
@@ -133,7 +137,11 @@ class BulkGeneratePitchView(APIView):
 
         lead_ids = serializer.validated_data["lead_ids"]
         tone = serializer.validated_data["tone"]
-        sender_name = serializer.validated_data["sender_name"]
+        sender_name = (
+            serializer.validated_data.get("sender_name")
+            or request.user.first_name
+            or request.user.username
+        )
 
         # 1. Fetch only leads that actually exist in the DB (Missing leads cost 0 tokens)
         leads_qs = Lead.objects.filter(id__in=lead_ids)
@@ -303,7 +311,11 @@ class GenerateProposalView(APIView):
         check(request.user, "ai_pitch")
 
         lead_id = serializer.validated_data["lead_id"]
-        sender_name = serializer.validated_data["sender_name"]
+        sender_name = (
+            serializer.validated_data.get("sender_name")
+            or request.user.first_name
+            or request.user.username
+        )
         service_type = serializer.validated_data["service_type"]
         price_range = serializer.validated_data["price_range"]
 

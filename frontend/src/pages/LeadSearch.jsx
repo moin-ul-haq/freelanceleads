@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, errorMessage } from '../api/client'
-import { useAuth } from '../context/AuthContext'
 import { PageHeader, Card, Button, Input, Alert, Spinner, ScoreBadge, EmptyState } from '../components/ui'
 import PitchModal from '../components/PitchModal'
 import AddToPipelineModal from '../components/AddToPipelineModal'
+import BulkPitchModal from '../components/BulkPitchModal'
 
 // Survives navigation (lead detail → back) and page reloads within the tab,
 // so search results never disappear when the user comes back.
@@ -14,8 +14,12 @@ function loadCachedSearch() {
   try { return JSON.parse(sessionStorage.getItem(SEARCH_CACHE_KEY)) || null } catch { return null }
 }
 
+// "toronto, miami , dallas" → ["toronto", "miami", "dallas"]
+function parseCities(raw) {
+  return raw.split(',').map((c) => c.trim()).filter(Boolean).slice(0, 10)
+}
+
 export default function LeadSearch() {
-  const { user } = useAuth()
   const cached = useRef(loadCachedSearch()).current
   const [niche, setNiche] = useState(cached?.niche || '')
   const [city, setCity] = useState(cached?.city || '')
@@ -26,7 +30,14 @@ export default function LeadSearch() {
   const [busy, setBusy] = useState(false)
   const [pitchLead, setPitchLead] = useState(null)
   const [pipelineLead, setPipelineLead] = useState(null)
+  const [selected, setSelected] = useState(new Set())
+  const [bulkPipelineOpen, setBulkPipelineOpen] = useState(false)
+  const [bulkPitchOpen, setBulkPitchOpen] = useState(false)
+  const [bulkMsg, setBulkMsg] = useState('')
   const pollRef = useRef(null)
+
+  const auditsPending = results?.some((r) => !r.audit_done)
+  const selectedLeads = results?.filter((r) => selected.has(r.id)) || []
 
   // Keep the cache in sync with whatever is on screen
   useEffect(() => {
@@ -35,9 +46,6 @@ export default function LeadSearch() {
       sessionStorage.setItem(SEARCH_CACHE_KEY, JSON.stringify({ niche, city, country, results, meta }))
     } catch { /* storage full — not critical */ }
   }, [results, meta, niche, city, country])
-
-  const isFree = (user?.plan || 'free') === 'free'
-  const auditsPending = results?.some((r) => !r.audit_done)
 
   // Poll audit progress (no quota cost) so scores + emails fill in live
   useEffect(() => {
@@ -50,7 +58,6 @@ export default function LeadSearch() {
         const updated = new Map(data.results.map((r) => [r.id, r]))
         setResults((rs) => rs.map((r) => {
           const u = updated.get(r.id)
-          // keep local is_saved state — status endpoint recomputes it anyway
           return u ? { ...u, is_saved: r.is_saved } : r
         }))
       } catch { /* transient poll errors are fine */ }
@@ -59,15 +66,20 @@ export default function LeadSearch() {
   }, [auditsPending, results])
 
   async function search(opts = {}) {
-    if (!niche.trim() || !city.trim()) return
+    const cities = parseCities(city)
+    if (!niche.trim() || !cities.length) return
     setBusy(true)
     setError('')
+    setBulkMsg('')
     try {
-      const body = { niche: niche.trim(), city: city.trim(), ...opts }
+      const body = { niche: niche.trim(), ...opts }
+      if (cities.length === 1) body.city = cities[0]
+      else body.cities = cities
       if (country.trim()) body.country = country.trim()
       const data = await api.post('/leads/search/', body)
       setResults(data.results)
       setMeta(data)
+      setSelected(new Set())
       if (data.skipped_reason && !data.results.length) setError(data.skipped_reason)
     } catch (err) {
       setError(errorMessage(err, 'Search failed'))
@@ -85,6 +97,19 @@ export default function LeadSearch() {
       .catch((err) => setError(errorMessage(err)))
   }
 
+  async function bulkSave() {
+    setBulkMsg('')
+    let saved = 0
+    for (const lead of selectedLeads.filter((l) => !l.is_saved)) {
+      try {
+        await api.post(`/leads/${lead.id}/save/`, {})
+        saved += 1
+      } catch { /* keep going */ }
+    }
+    setResults((rs) => rs.map((r) => (selected.has(r.id) ? { ...r, is_saved: true } : r)))
+    setBulkMsg(`Saved ${saved} leads ⭐`)
+  }
+
   return (
     <div>
       <PageHeader
@@ -93,9 +118,9 @@ export default function LeadSearch() {
       />
 
       <Card className="mb-6 p-5">
-        <form onSubmit={(e) => { e.preventDefault(); search() }} className="grid gap-3 sm:grid-cols-[1fr_1fr_180px_auto]">
+        <form onSubmit={(e) => { e.preventDefault(); search() }} className="grid gap-3 sm:grid-cols-[1fr_1.2fr_180px_auto]">
           <Input label="Niche" placeholder="plumber" value={niche} onChange={(e) => setNiche(e.target.value)} required />
-          <Input label="City" placeholder="toronto" value={city} onChange={(e) => setCity(e.target.value)} required />
+          <Input label="City (comma-separate for multiple)" placeholder="toronto, miami, dallas" value={city} onChange={(e) => setCity(e.target.value)} required />
           <Input label="Country (optional)" placeholder="canada" value={country} onChange={(e) => setCountry(e.target.value)} />
           <div className="flex items-end">
             <Button type="submit" disabled={busy} className="h-[38px] w-full sm:w-auto">
@@ -103,14 +128,19 @@ export default function LeadSearch() {
             </Button>
           </div>
         </form>
+        <p className="mt-2 text-xs text-slate-400">
+          Up to 10 cities per search — each city uses one search credit.
+        </p>
       </Card>
 
       <Alert>{error}</Alert>
+      <Alert kind="success">{bulkMsg}</Alert>
 
       {meta && !error && (
-        <div className="mb-3 mt-4 flex items-center justify-between text-sm text-slate-500">
+        <div className="mb-3 mt-4 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-500">
           <span className="flex items-center gap-2">
             {meta.count} leads · source: <span className="font-medium">{meta.source}</span>
+            {meta.cities_searched?.length > 1 && ` · cities: ${meta.cities_searched.join(', ')}`}
             {auditsPending && (
               <span className="flex items-center gap-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
                 <Spinner className="h-3 w-3" /> auditing websites & finding emails…
@@ -118,12 +148,22 @@ export default function LeadSearch() {
             )}
             {meta.cities_skipped?.length > 0 && ` · skipped: ${meta.cities_skipped.join(', ')}`}
           </span>
-          {!isFree && (
-            <div className="flex gap-2">
-              <Button variant="secondary" onClick={() => search({ load_more: true })} disabled={busy}>Load more</Button>
-              <Button variant="secondary" onClick={() => search({ refresh: true })} disabled={busy}>Refresh data</Button>
-            </div>
-          )}
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => search({ load_more: true })} disabled={busy}>Load more</Button>
+            <Button variant="secondary" onClick={() => search({ refresh: true })} disabled={busy}>Refresh data</Button>
+          </div>
+        </div>
+      )}
+
+      {selected.size > 0 && (
+        <div className="sticky top-2 z-10 mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 shadow-sm">
+          <span className="text-sm font-semibold text-indigo-800">{selected.size} selected</span>
+          <div className="ml-auto flex flex-wrap gap-2">
+            <Button variant="secondary" className="!py-1.5 text-xs" onClick={bulkSave}>⭐ Save all</Button>
+            <Button variant="secondary" className="!py-1.5 text-xs" onClick={() => setBulkPipelineOpen(true)}>📋 Add to pipeline</Button>
+            <Button className="!py-1.5 text-xs" onClick={() => setBulkPitchOpen(true)}>🤖 Generate pitches</Button>
+            <Button variant="ghost" className="!py-1.5 text-xs" onClick={() => setSelected(new Set())}>Clear</Button>
+          </div>
         </div>
       )}
 
@@ -134,6 +174,8 @@ export default function LeadSearch() {
       {results?.length > 0 && (
         <LeadsTable
           leads={results}
+          selected={selected}
+          onSelect={setSelected}
           onSave={toggleSaved}
           onPitch={setPitchLead}
           onPipeline={setPipelineLead}
@@ -142,17 +184,44 @@ export default function LeadSearch() {
 
       <PitchModal lead={pitchLead} open={!!pitchLead} onClose={() => setPitchLead(null)} />
       <AddToPipelineModal lead={pipelineLead} open={!!pipelineLead} onClose={() => setPipelineLead(null)} />
+      <AddToPipelineModal
+        leads={selectedLeads}
+        open={bulkPipelineOpen}
+        onClose={() => setBulkPipelineOpen(false)}
+        onAdded={(n) => setBulkMsg(`Added ${n} leads to pipeline 📋`)}
+      />
+      <BulkPitchModal leads={selectedLeads} open={bulkPitchOpen} onClose={() => setBulkPitchOpen(false)} />
     </div>
   )
 }
 
-export function LeadsTable({ leads, onSave, onPitch, onPipeline }) {
+export function LeadsTable({ leads, selected, onSelect, onSave, onPitch, onPipeline }) {
+  const selectable = !!onSelect
+  const allSelected = selectable && leads.length > 0 && leads.every((l) => selected.has(l.id))
+
+  function toggleAll() {
+    onSelect(allSelected ? new Set() : new Set(leads.map((l) => l.id)))
+  }
+
+  function toggleOne(id) {
+    onSelect((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
   return (
     <Card className="overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
             <tr>
+              {selectable && (
+                <th className="w-10 px-3 py-3">
+                  <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Select all" />
+                </th>
+              )}
               <th className="px-4 py-3">Business</th>
               <th className="px-4 py-3">Score</th>
               <th className="px-4 py-3">Rating</th>
@@ -164,7 +233,17 @@ export function LeadsTable({ leads, onSave, onPitch, onPipeline }) {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {leads.map((lead) => (
-              <tr key={lead.id} className="hover:bg-slate-50">
+              <tr key={lead.id} className={`hover:bg-slate-50 ${selected?.has(lead.id) ? 'bg-indigo-50/40' : ''}`}>
+                {selectable && (
+                  <td className="px-3 py-3">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(lead.id)}
+                      onChange={() => toggleOne(lead.id)}
+                      aria-label={`Select ${lead.name}`}
+                    />
+                  </td>
+                )}
                 <td className="px-4 py-3">
                   <Link to={`/leads/${lead.id}`} className="group block">
                     <div className="font-medium text-slate-900 group-hover:text-indigo-700 group-hover:underline">{lead.name}</div>

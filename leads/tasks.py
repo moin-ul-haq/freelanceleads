@@ -31,25 +31,31 @@ def _check_ssl(url: str) -> bool:
         hostname = url.replace("https://", "").replace("http://", "").split("/")[0]
         ctx = ssl.create_default_context()
         with ctx.wrap_socket(socket.socket(), server_hostname=hostname) as s:
-            s.settimeout(3)  # reduced from 5
+            s.settimeout(6)  # slow-but-valid TLS handshakes must not read as "no SSL"
             s.connect((hostname, 443))
         return True
     except Exception:
         return False
 
 
-def _scrape_website(url: str) -> dict:
+def _audit_website(url: str) -> dict:
     """
-    Scrapes website HTML and checks:
-    - meta title, meta description
-    - schema markup (JSON-LD)
-    - social media links
+    Fetches the site once and derives all website checks from it.
+
+    Key rule: if the site can't be fetched at all (bot wall, geo block,
+    datacenter-IP block, dead host), the audit is INCONCLUSIVE — we must not
+    record unverified problems as facts. False "no SSL" / "no meta" flags
+    inflate the opportunity score and, worse, produce pitches that accuse the
+    business of problems it doesn't have. Unverifiable checks default to
+    "no problem found".
     """
     result = {
-        "has_meta_title": False,
-        "has_meta_desc": False,
-        "has_schema": False,
-        "has_social": False,
+        "reachable": False,
+        "has_ssl": url.startswith("https://"),
+        "has_meta_title": True,
+        "has_meta_desc": True,
+        "has_schema": True,
+        "has_social": True,
         "email": "",
     }
 
@@ -59,7 +65,14 @@ def _scrape_website(url: str) -> dict:
     try:
         content, final_url = _fetch_page(url)
         if not content:
+            # Unreachable from our network — only SSL can still be probed
+            if not result["has_ssl"]:
+                result["has_ssl"] = _check_ssl(url)
             return result
+
+        result["reachable"] = True
+        # Real-world truth: if the browser-style fetch landed on https, SSL works
+        result["has_ssl"] = final_url.startswith("https://") or _check_ssl(final_url)
 
         meta_html = content[:AUDIT_META_BYTES]
         soup = BeautifulSoup(meta_html, "html.parser")
@@ -158,30 +171,27 @@ def audit_lead(self, lead_id: int):
         lead.save(update_fields=["audit_done", "opportunity_score"])
         return
 
-    # Run SSL check and scrape concurrently
-    has_ssl = False
+    # Run the site audit and PageSpeed concurrently
     scraped = {
-        "has_meta_title": False,
-        "has_meta_desc": False,
-        "has_schema": False,
-        "has_social": False,
+        "reachable": False,
+        "has_ssl": website.startswith("https://"),
+        "has_meta_title": True,
+        "has_meta_desc": True,
+        "has_schema": True,
+        "has_social": True,
         "email": "",
     }
-
     pagespeed_score = None
 
-    with ThreadPoolExecutor(max_workers=3) as ex:
+    with ThreadPoolExecutor(max_workers=2) as ex:
         futures = {
-            ex.submit(_check_ssl, website): "ssl",
-            ex.submit(_scrape_website, website): "scrape",
+            ex.submit(_audit_website, website): "site",
             ex.submit(get_pagespeed_score, website): "pagespeed",
         }
         for future in as_completed(futures):
             key = futures[future]
             try:
-                if key == "ssl":
-                    has_ssl = future.result()
-                elif key == "pagespeed":
+                if key == "pagespeed":
                     pagespeed_score = future.result()
                 else:
                     scraped = future.result()
@@ -191,7 +201,7 @@ def audit_lead(self, lead_id: int):
     # Recalculate full score with all audit data
     score = calculate_score(
         has_website=lead.has_website,
-        has_ssl=has_ssl,
+        has_ssl=scraped["has_ssl"],
         pagespeed_score=pagespeed_score,
         rating=lead.rating,
         review_count=lead.review_count,
@@ -203,7 +213,7 @@ def audit_lead(self, lead_id: int):
 
     # Save permanently to DB — next time lead comes from cache/DB, no audit needed
     lead.pagespeed_score = pagespeed_score
-    lead.has_ssl = has_ssl
+    lead.has_ssl = scraped["has_ssl"]
     lead.has_meta_title = scraped["has_meta_title"]
     lead.has_meta_desc = scraped["has_meta_desc"]
     lead.has_schema = scraped["has_schema"]

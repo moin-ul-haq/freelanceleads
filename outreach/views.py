@@ -408,3 +408,65 @@ class CampaignAnalyticsView(APIView):
             "total_completed": lead_stats['total_completed'],
         })
 
+
+
+class SendEmailView(APIView):
+    """
+    POST /api/outreach/send-email/ {lead_id, subject, body}
+    One-off send (e.g. an AI pitch) through the user's connected email
+    account. Counts against the email_send quota.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from leads.models import Lead
+        from freelanceleads.quota_guard import check, increment
+        from outreach.utils import send_email_via_account
+        from rest_framework.exceptions import PermissionDenied
+
+        lead_id = request.data.get("lead_id")
+        subject = (request.data.get("subject") or "").strip()
+        body = (request.data.get("body") or "").strip()
+
+        if not lead_id or not subject or not body:
+            return Response(
+                {"error": "lead_id, subject and body are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            lead = Lead.objects.get(id=lead_id)
+        except Lead.DoesNotExist:
+            return Response({"error": "Lead not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not lead.email:
+            return Response(
+                {"error": "This lead has no email address."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        account = EmailAccount.objects.filter(user=request.user).first()
+        if not account:
+            return Response(
+                {"error": "No email account connected. Connect one in Outreach → Email Accounts first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            check(request.user, "email_send")
+        except PermissionDenied as e:
+            return Response(e.detail, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            send_email_via_account(account, lead.email, subject, body)
+        except Exception as e:
+            return Response(
+                {"error": f"Send failed: {e}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        increment(request.user, "email_send")
+        return Response(
+            {"status": "sent", "to": lead.email, "from": account.email_address},
+            status=status.HTTP_200_OK,
+        )

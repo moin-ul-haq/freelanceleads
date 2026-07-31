@@ -12,6 +12,8 @@ User = get_user_model()
 
 
 class RegisterSerializer(serializers.ModelSerializer):
+    # Required: the AI pitch generator signs emails with the owner's first name
+    first_name = serializers.CharField(max_length=150, required=True, allow_blank=False)
     password = serializers.CharField(write_only=True, validators=[validate_password])
     password2 = serializers.CharField(write_only=True)
 

@@ -230,6 +230,9 @@ def _fetch_leads_for_city(
         # Layer 1 — Redis (fast path: no DB query at all)
         cached_lead_ids = cache.get(cache_key)
         if cached_lead_ids:
+            # Re-queue any leads whose audit never completed (batch task
+            # filters to pending only, so this is a no-op when all are done)
+            dispatch_audits(list(cached_lead_ids))
             return _leads_by_ids(cached_lead_ids), "redis_cache", None, []
 
         # Layer 2 — DB (exact city match only)
@@ -243,6 +246,7 @@ def _fetch_leads_for_city(
 
         if lead_ids:
             cache.set(cache_key, lead_ids, timeout=REDIS_CACHE_TTL)
+            dispatch_audits(lead_ids)
             # Return region-aware results to user (includes state matches)
             region_leads = list(_query_leads_with_region(niche, city, country))
             search_cache = _get_search_cache(cache_key)
@@ -356,11 +360,8 @@ class LeadSearchView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        if load_more and is_free_user:
-            return Response(
-                {"error": "Load More is a Pro feature. Please upgrade."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        # Load More is available on every plan — it consumes a search credit
+        # per city like any other search, so the quota still protects costs.
 
         # Use the centralized quota function (avoids duplicate _get_plan_limit + _get_counter calls)
         remaining_credits = get_remaining_quota(user, "search")

@@ -8,7 +8,7 @@ import { AuthShell } from './Login'
 export default function Register() {
   const { register } = useAuth()
   const navigate = useNavigate()
-  const [form, setForm] = useState({ username: '', email: '', password: '', password2: '' })
+  const [form, setForm] = useState({ first_name: '', last_name: '', email: '', password: '', password2: '' })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -20,7 +20,7 @@ export default function Register() {
     setBusy(true)
     setError('')
     try {
-      await register(form.username, form.email, form.password, form.password2)
+      await register(form.first_name, form.last_name, form.email, form.password, form.password2)
       navigate('/dashboard')
     } catch (err) {
       setError(errorMessage(err, 'Registration failed'))
@@ -33,7 +33,10 @@ export default function Register() {
     <AuthShell title="Create your account" subtitle="Start finding local business clients today">
       <form onSubmit={submit} className="space-y-4">
         <Alert>{error}</Alert>
-        <Input label="Username" value={form.username} onChange={set('username')} required autoFocus />
+        <div className="grid grid-cols-2 gap-3">
+          <Input label="First name" value={form.first_name} onChange={set('first_name')} required autoFocus />
+          <Input label="Last name (optional)" value={form.last_name} onChange={set('last_name')} />
+        </div>
         <Input label="Email" type="email" value={form.email} onChange={set('email')} required />
         <Input label="Password" type="password" value={form.password} onChange={set('password')} required minLength={8} />
         <Input label="Confirm password" type="password" value={form.password2} onChange={set('password2')} required />
