@@ -96,6 +96,7 @@ class CampaignLead(models.Model):
     campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name='campaign_leads')
     lead = models.ForeignKey(Lead, on_delete=models.CASCADE, related_name='campaign_enrollments')
     current_step = models.PositiveIntegerField(default=1)
+    send_failures = models.PositiveIntegerField(default=0)
     next_step_date = models.DateTimeField(null=True, blank=True)
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='active')
     added_at = models.DateTimeField(auto_now_add=True)
@@ -111,7 +112,12 @@ class CampaignLead(models.Model):
         return f"{self.lead.name} in {self.campaign.name}"
 
 class OutreachMessage(models.Model):
-    campaign_lead = models.ForeignKey(CampaignLead, on_delete=models.CASCADE, related_name='messages')
+    # Nullable: one-off sends (AI pitch "Send email") have no campaign
+    campaign_lead = models.ForeignKey(CampaignLead, on_delete=models.CASCADE, related_name='messages', null=True, blank=True)
+    # Stamped directly so daily caps / tracking / reply matching cover
+    # one-off sends and survive campaign account reassignment
+    email_account = models.ForeignKey(EmailAccount, on_delete=models.SET_NULL, related_name='sent_messages', null=True, blank=True)
+    lead = models.ForeignKey('leads.Lead', on_delete=models.SET_NULL, related_name='outreach_messages', null=True, blank=True)
     message_id = models.CharField(max_length=255, unique=True, db_index=True)
     subject = models.CharField(max_length=255)
     body = models.TextField()
@@ -136,3 +142,17 @@ class EmailReply(models.Model):
 
     def __str__(self):
         return f"Reply from {self.from_email}"
+
+
+class UnsubscribedEmail(models.Model):
+    """Per-user suppression list — checked before every send and enroll."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='unsubscribes')
+    email = models.EmailField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'email')
+
+    def __str__(self):
+        return f"{self.email} (user {self.user_id})"

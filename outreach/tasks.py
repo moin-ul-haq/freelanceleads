@@ -12,7 +12,8 @@ import base64
 import re
 import logging
 from datetime import timedelta
-from outreach.models import EmailAccount, CampaignLead, OutreachMessage, EmailReply
+from outreach.models import EmailAccount, CampaignLead, OutreachMessage, EmailReply, UnsubscribedEmail
+from django.core import signing
 
 logger = logging.getLogger(__name__)
 
@@ -62,15 +63,28 @@ def process_outreach_campaigns():
 
     def _account_sent_today(acc):
         if acc.id not in sent_today:
+            from django.db.models import Q as _Q
             sent_today[acc.id] = OutreachMessage.objects.filter(
-                campaign_lead__campaign__email_account=acc,
+                _Q(email_account=acc) | _Q(campaign_lead__campaign__email_account=acc),
                 sent_at__gte=day_ago,
-            ).count()
+            ).distinct().count()
         return sent_today[acc.id]
 
     for cl in active_leads:
         account = cl.campaign.email_account
         if not account or not cl.lead.email:
+            continue
+
+        # Unsubscribed recipients are permanently suppressed
+        if UnsubscribedEmail.objects.filter(user=cl.campaign.user, email__iexact=cl.lead.email).exists():
+            cl.status = 'unsubscribed'
+            cl.save(update_fields=['status'])
+            continue
+
+        # Never send to a verified-dead mailbox — mark bounced and move on
+        if cl.lead.email_status == 'undeliverable':
+            cl.status = 'bounced'
+            cl.save(update_fields=['status'])
             continue
 
         # Per-account daily cap — protects the sender's reputation
@@ -102,10 +116,20 @@ def process_outreach_campaigns():
         msg['Message-ID'] = unique_id
         
         tracking_url = f"{settings.SITE_URL}/api/outreach/track/{unique_id.strip('<>')}.gif"
+        unsub_token = signing.dumps(
+            {"u": cl.campaign.user_id, "e": cl.lead.email}, salt="unsubscribe"
+        )
+        unsub_url = f"{settings.SITE_URL}/api/outreach/unsubscribe/{unsub_token}/"
+        msg['List-Unsubscribe'] = f'<{unsub_url}>'
+        msg['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
         html_body = step.body_template.replace("{{first_name}}", first_name)
+        html_body += f'<br><br><p style="font-size:11px;color:#999;">Don\'t want these emails? <a href="{unsub_url}" style="color:#999;">Unsubscribe</a>.</p>'
         html_body += f'<img src="{tracking_url}" width="1" height="1" style="display:none;" />'
         
-        msg.set_content(html_body, subtype='html')
+        import re as _re
+        text_body = _re.sub(r'<[^>]+>', '', step.body_template.replace("{{first_name}}", first_name))
+        msg.set_content(text_body)
+        msg.add_alternative(html_body, subtype='html')
 
         try:
             if account.provider == 'google':
@@ -126,6 +150,8 @@ def process_outreach_campaigns():
             
             OutreachMessage.objects.create(
                 campaign_lead=cl,
+                email_account=account,
+                lead=cl.lead,
                 message_id=unique_id.strip('<>'),
                 subject=msg['Subject'],
                 body=html_body
@@ -145,13 +171,21 @@ def process_outreach_campaigns():
             
         except Exception as e:
             logger.error("Failed to send email to %s: %s", cl.lead.email, e)
+            cl.send_failures = (cl.send_failures or 0) + 1
+            if cl.send_failures >= 3:
+                cl.status = 'bounced'
+                cl.save(update_fields=['send_failures', 'status'])
+            else:
+                # exponential-ish backoff instead of hammering every 10 minutes
+                cl.next_step_date = now + timedelta(hours=4 * cl.send_failures)
+                cl.save(update_fields=['send_failures', 'next_step_date'])
 
 @shared_task
 def poll_imap_replies():
     close_old_connections()
     # Only poll accounts that have active campaigns (not all accounts globally)
     accounts = EmailAccount.objects.filter(
-        campaigns__status='active'
+        campaign__status='active'
     ).distinct()
     
     for account in accounts:
@@ -206,8 +240,9 @@ def poll_imap_replies():
                             received_at=timezone.now()
                         )
                         
-                        outreach_msg.campaign_lead.status = 'replied'
-                        outreach_msg.campaign_lead.save()
+                        if outreach_msg.campaign_lead:
+                            outreach_msg.campaign_lead.status = 'replied'
+                            outreach_msg.campaign_lead.save()
                         break
                         
         except Exception as e:

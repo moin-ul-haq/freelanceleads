@@ -158,7 +158,7 @@ function CampaignDetailModal({ campaign, onClose, onChanged }) {
     e.preventDefault()
     setError('')
     try {
-      await api.post('/outreach/campaigns/steps/', { campaign: campaign.id, ...step })
+      await api.post('/outreach/campaigns/steps/', { campaign_id: campaign.id, ...step })
       setStep({ step_order: (detail.steps?.length || 0) + 2, delay_days: 3, subject_template: '', body_template: '' })
       setInfo('Step added.')
       reload()
@@ -204,6 +204,15 @@ function CampaignDetailModal({ campaign, onClose, onChanged }) {
           <div className="flex gap-2">
             {detail.status !== 'active' && <Button onClick={() => setStatus('active')}>▶ Launch</Button>}
             {detail.status === 'active' && <Button variant="secondary" onClick={() => setStatus('paused')}>⏸ Pause</Button>}
+            <Button
+              variant="danger"
+              onClick={async () => {
+                if (!window.confirm('Delete this campaign and its history?')) return
+                try { await api.del(`/outreach/campaigns/${campaign.id}/`); onChanged(); onClose() } catch (err) { setError(errorMessage(err)) }
+              }}
+            >
+              Delete
+            </Button>
           </div>
         </div>
 
@@ -223,10 +232,21 @@ function CampaignDetailModal({ campaign, onClose, onChanged }) {
           {detail.steps?.length ? (
             <ol className="space-y-2">
               {detail.steps.map((s) => (
-                <li key={s.id} className="rounded-lg border border-slate-200 p-2.5 text-sm">
-                  <span className="font-medium">Step {s.step_order}</span>
-                  <span className="text-slate-400"> · wait {s.delay_days}d · </span>
-                  <span className="text-slate-600">{s.subject_template}</span>
+                <li key={s.id} className="flex items-center justify-between rounded-lg border border-slate-200 p-2.5 text-sm">
+                  <span>
+                    <span className="font-medium">Step {s.step_order}</span>
+                    <span className="text-slate-400"> · wait {s.delay_days}d · </span>
+                    <span className="text-slate-600">{s.subject_template}</span>
+                  </span>
+                  <button
+                    onClick={async () => {
+                      if (!window.confirm(`Delete step ${s.step_order}?`)) return
+                      try { await api.del(`/outreach/campaigns/steps/${s.id}/`); reload(); onChanged() } catch (err) { setError(errorMessage(err)) }
+                    }}
+                    className="text-xs text-slate-400 hover:text-red-600"
+                  >
+                    ✕
+                  </button>
                 </li>
               ))}
             </ol>
@@ -406,7 +426,18 @@ function AccountsTab() {
               <p className="text-sm font-semibold text-slate-900">{a.email_address}</p>
               <p className="text-xs text-slate-400">{a.provider} · connected {a.created_at?.slice(0, 10)}</p>
             </div>
-            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">connected</span>
+            <span className="flex items-center gap-3">
+              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">connected</span>
+              <button
+                onClick={async () => {
+                  if (!window.confirm(`Disconnect ${a.email_address}? Stored tokens are deleted.`)) return
+                  try { await api.del(`/outreach/accounts/${a.id}/`); load() } catch (err) { setError(errorMessage(err)) }
+                }}
+                className="text-xs text-slate-400 hover:text-red-600"
+              >
+                Disconnect
+              </button>
+            </span>
           </Card>
         ))}
       </div>

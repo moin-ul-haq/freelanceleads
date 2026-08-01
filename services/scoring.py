@@ -19,7 +19,7 @@ Score interpretation:
 # ── Problem Weights ───────────────────────────────────────────────
 
 PROBLEM_WEIGHTS = {
-    "no_website": 40,  # Biggest opportunity — build from scratch
+    "no_website": 50,  # Biggest opportunity — build from scratch
     "no_ssl": 15,  # HTTP only
     "slow_pagespeed": 15,  # PageSpeed score < 50 (only when a score was measured)
     "poor_rating": 10,  # Rating < 3.5 stars
@@ -28,7 +28,8 @@ PROBLEM_WEIGHTS = {
     "no_schema": 5,  # No JSON-LD / structured data
     "no_social": 10,  # No social media presence
 }
-# Total possible = 100 (clean — no normalization needed)
+# Branch maxima: no-website lead = 50+10+10+10 = 80; website lead = 15+15+10+5+10+10+10 = 75.
+# The two branches are mutually exclusive, so scores stay within 0-100.
 
 # Score thresholds
 HOT_LEAD_THRESHOLD = 70

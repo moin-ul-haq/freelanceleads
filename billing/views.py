@@ -409,7 +409,7 @@ class StripeWebhookView(APIView):
 
         # Update period end
         subscription.current_period_end = datetime.fromtimestamp(
-            invoice["lines"]["data"][0]["period"]["end"],
+            (invoice.get("lines", {}).get("data") or [{}])[0]["period"]["end"],
             tz=dt_timezone.utc,
         )
         subscription.status = "active"

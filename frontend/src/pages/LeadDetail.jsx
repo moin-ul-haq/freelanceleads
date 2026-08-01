@@ -28,6 +28,16 @@ export default function LeadDetail() {
   }
   useEffect(load, [id])
 
+  // Restore a previously generated demo site for this lead
+  useEffect(() => {
+    api.get('/sites/')
+      .then((sites) => {
+        const mine = (Array.isArray(sites) ? sites : []).find((s) => String(s.lead) === String(id))
+        if (mine) setSite(mine)
+      })
+      .catch(() => {})
+  }, [id])
+
   // While the audit is still running, refresh every 3s so results fill in live
   useEffect(() => {
     if (!lead || lead.audit_done) return

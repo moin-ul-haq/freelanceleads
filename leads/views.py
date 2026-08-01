@@ -184,7 +184,14 @@ def _save_businesses_as_leads(
 
     # Bulk update all refreshed leads in one query
     if leads_to_update:
-        update_fields = list(defaults.keys())
+        update_fields = [
+            "name", "niche", "city", "state", "country", "address", "phone",
+            "website", "rating", "review_count", "gbp_status", "has_website",
+            "latitude", "longitude", "opportunity_score",
+            # refresh resets — must always be included
+            "audit_done", "has_ssl", "has_meta_title", "has_meta_desc",
+            "has_schema", "has_social",
+        ]
         Lead.objects.bulk_update(leads_to_update, update_fields)
 
     # Bulk create all new leads in one query
@@ -396,8 +403,8 @@ class LeadSearchView(APIView):
                 cities_skipped.insert(0, city)
                 continue
 
-            if source == "api_error":
-                # External API failed — don't charge the user a search credit
+            if source in ("api_error", "exhausted"):
+                # Failed provider call or nothing left to load — never charge
                 sources_seen.add(source)
                 cities_skipped.insert(0, city)
                 continue

@@ -45,7 +45,7 @@ export default function Dashboard() {
         <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
           <Stat label="Leads in pipeline" value={stats.total_leads ?? 0} />
           <Stat label="Pipeline value" value={`$${Number(stats.total_deal_value ?? 0).toLocaleString()}`} />
-          <Stat label="Won value" value={`$${Number(stats.won_value ?? 0).toLocaleString()}`} accent />
+          <Stat label="Won value" value={`$${Number(stats.won_deal_value ?? 0).toLocaleString()}`} accent />
           <Stat label="Conversion rate" value={`${stats.conversion_rate ?? 0}%`} />
         </div>
       )}

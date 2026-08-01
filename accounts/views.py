@@ -132,8 +132,16 @@ class ChangePasswordView(APIView):
         except TokenError:
             pass  # already invalid or expired, ignore
 
+        # Issue a fresh token pair so the session continues seamlessly
+        new_refresh = RefreshToken.for_user(request.user)
         return Response(
-            {"message": "Password changed successfully. Please login again."},
+            {
+                "message": "Password changed successfully.",
+                "tokens": {
+                    "refresh": str(new_refresh),
+                    "access": str(new_refresh.access_token),
+                },
+            },
             status=status.HTTP_200_OK,
         )
 
@@ -275,7 +283,7 @@ class InviteMemberView(APIView):
         seat_limit = _get_team_seat_limit(team.owner)
         current_seats = team.seats.count()
 
-        if current_seats >= seat_limit:
+        if seat_limit != -1 and current_seats >= seat_limit:
             return Response(
                 {
                     "error": f"Team seat limit reached ({seat_limit}). Upgrade your plan for more seats.",

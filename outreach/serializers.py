@@ -57,8 +57,18 @@ class CampaignSerializer(serializers.ModelSerializer):
         return getattr(obj, '_enrolled_count', obj.campaign_leads.count())
 
 class EmailReplySerializer(serializers.ModelSerializer):
-    lead_name = serializers.CharField(source='outreach_message.campaign_lead.lead.name', read_only=True)
-    campaign_name = serializers.CharField(source='outreach_message.campaign_lead.campaign.name', read_only=True)
+    lead_name = serializers.SerializerMethodField()
+    campaign_name = serializers.SerializerMethodField()
+
+    def get_lead_name(self, obj):
+        m = obj.outreach_message
+        if m.campaign_lead:
+            return m.campaign_lead.lead.name
+        return m.lead.name if m.lead else None
+
+    def get_campaign_name(self, obj):
+        m = obj.outreach_message
+        return m.campaign_lead.campaign.name if m.campaign_lead else "One-off email"
     
     class Meta:
         model = EmailReply

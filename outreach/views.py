@@ -3,6 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.db.models import Count, Case, When, Q
+from django.conf import settings
 from django.core import signing
 from django.http import HttpResponse
 from django.utils import timezone
@@ -99,7 +100,7 @@ class CampaignListCreateView(generics.ListCreateAPIView):
         serializer.save(**save_kwargs)
 
 
-class CampaignDetailView(generics.RetrieveUpdateAPIView):
+class CampaignDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = CampaignSerializer
     permission_classes = [IsAuthenticated]
 
@@ -198,6 +199,13 @@ class CampaignEnrollView(APIView):
 
             if not lead.email:
                 missing_email_ids.append(lid)
+                skipped_ids.append({"lead_id": lid, "reason": "no_email"})
+                continue
+
+            from outreach.models import UnsubscribedEmail
+            if UnsubscribedEmail.objects.filter(user=request.user, email__iexact=lead.email).exists():
+                skipped_ids.append({"lead_id": lid, "reason": "unsubscribed"})
+                continue
 
             _obj, created = CampaignLead.objects.get_or_create(
                 campaign=campaign,
@@ -339,11 +347,8 @@ class GoogleCallbackView(APIView):
             account.refresh_token = refresh_token
         account.save()
 
-        return Response({
-            "status": "connected",
-            "email": email_address,
-            "created": created,
-        })
+        from django.http import HttpResponseRedirect
+        return HttpResponseRedirect(f"{settings.FRONTEND_URL}/outreach?connected={email_address}")
 
 
 class CampaignAnalyticsView(APIView):
@@ -460,26 +465,94 @@ class SendEmailView(APIView):
         # Respect the account's daily cap (shared with campaign sends)
         from datetime import timedelta
         day_ago = timezone.now() - timedelta(hours=24)
+        from django.db.models import Q as _Q
         sent_today = OutreachMessage.objects.filter(
-            campaign_lead__campaign__email_account=account,
+            _Q(email_account=account) | _Q(campaign_lead__campaign__email_account=account),
             sent_at__gte=day_ago,
-        ).count()
+        ).distinct().count()
         if sent_today >= (account.daily_send_limit or 40):
             return Response(
                 {"error": f"Daily send limit ({account.daily_send_limit}) reached for {account.email_address}. Try again tomorrow — this protects your sender reputation."},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
 
+        from outreach.models import UnsubscribedEmail
+        if UnsubscribedEmail.objects.filter(user=request.user, email__iexact=lead.email).exists():
+            return Response(
+                {"error": "This recipient has unsubscribed from your emails."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         try:
-            send_email_via_account(account, lead.email, subject, body)
+            message_id = send_email_via_account(account, lead.email, subject, body)
         except Exception as e:
             return Response(
                 {"error": f"Send failed: {e}"},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
+        # Record the send so daily caps, open tracking and reply matching
+        # cover one-off emails exactly like campaign emails
+        OutreachMessage.objects.create(
+            campaign_lead=None,
+            email_account=account,
+            lead=lead,
+            message_id=message_id,
+            subject=subject,
+            body=body,
+        )
+
         increment(request.user, "email_send")
         return Response(
             {"status": "sent", "to": lead.email, "from": account.email_address},
             status=status.HTTP_200_OK,
         )
+
+
+class UnsubscribeView(APIView):
+    """GET /api/outreach/unsubscribe/<token>/ — public one-click unsubscribe."""
+
+    permission_classes = [AllowAny]
+
+    def get(self, request, token):
+        from django.http import HttpResponse
+        from outreach.models import UnsubscribedEmail
+
+        try:
+            data = signing.loads(token, salt="unsubscribe", max_age=60 * 60 * 24 * 365)
+        except signing.BadSignature:
+            return HttpResponse("Invalid unsubscribe link.", status=400)
+
+        UnsubscribedEmail.objects.get_or_create(user_id=data["u"], email=data["e"].lower())
+        CampaignLead.objects.filter(
+            campaign__user_id=data["u"], lead__email__iexact=data["e"], status="active"
+        ).update(status="unsubscribed")
+        return HttpResponse(
+            "<html><body style='font-family:sans-serif;text-align:center;padding:60px;'>"
+            "<h2>You've been unsubscribed.</h2><p>You won't receive further emails.</p>"
+            "</body></html>"
+        )
+
+    # RFC 8058 one-click POST from mail clients
+    def post(self, request, token):
+        return self.get(request, token)
+
+
+class EmailAccountDeleteView(APIView):
+    """DELETE /api/outreach/accounts/<pk>/ — disconnect + wipe stored tokens."""
+
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        deleted, _ = EmailAccount.objects.filter(id=pk, user=request.user).delete()
+        if not deleted:
+            return Response({"error": "Account not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class CampaignStepDetailView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = CampaignStepSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return CampaignStep.objects.filter(campaign__user=self.request.user)

@@ -88,7 +88,7 @@ export default function Pipeline() {
         <div className="mb-4 flex flex-wrap gap-4 text-sm text-slate-600">
           <span><strong className="text-slate-900">{stats.total_leads}</strong> deals</span>
           <span>value <strong className="text-slate-900">${Number(stats.total_deal_value ?? 0).toLocaleString()}</strong></span>
-          <span>won <strong className="text-emerald-600">${Number(stats.won_value ?? 0).toLocaleString()}</strong></span>
+          <span>won <strong className="text-emerald-600">${Number(stats.won_deal_value ?? 0).toLocaleString()}</strong></span>
           <span>conversion <strong className="text-slate-900">{stats.conversion_rate}%</strong></span>
         </div>
       )}

@@ -12,6 +12,9 @@ from outreach.views import (
     GoogleAuthURLView,
     GoogleCallbackView,
     SendEmailView,
+    UnsubscribeView,
+    EmailAccountDeleteView,
+    CampaignStepDetailView,
 )
 
 urlpatterns = [
@@ -27,5 +30,8 @@ urlpatterns = [
     path('google/auth-url/', GoogleAuthURLView.as_view(), name='outreach-google-auth'),
     path('google/callback/', GoogleCallbackView.as_view(), name='outreach-google-callback'),
     path('send-email/', SendEmailView.as_view(), name='outreach-send-email'),
+    path('unsubscribe/<str:token>/', UnsubscribeView.as_view(), name='outreach-unsubscribe'),
+    path('accounts/<int:pk>/', EmailAccountDeleteView.as_view(), name='outreach-account-delete'),
+    path('campaigns/steps/<int:pk>/', CampaignStepDetailView.as_view(), name='outreach-step-detail'),
 ]
 

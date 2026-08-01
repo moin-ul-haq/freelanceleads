@@ -123,7 +123,7 @@ class BulkGeneratePitchView(APIView):
     def post(self, request):
         # Max plan only — safe access to subscription
         subscription = getattr(request.user, "subscription", None)
-        if not subscription or subscription.plan.name != "max":
+        if not subscription or subscription.plan.name not in ("max", "unlimited"):
             return Response(
                 {
                     "error": "Bulk pitch generation is a Max plan feature. Please upgrade."
