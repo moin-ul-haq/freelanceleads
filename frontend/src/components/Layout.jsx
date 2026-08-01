@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import NotificationBell from './NotificationBell'
 
 const NAV = [
   { to: '/dashboard', label: 'Dashboard', icon: '📊' },
@@ -40,6 +41,10 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
+
+        <div className="border-t border-slate-200 px-3 py-2">
+          <NotificationBell />
+        </div>
 
         <div className="border-t border-slate-200 p-4">
           <div className="mb-2 truncate text-sm font-medium text-slate-800">{user?.username}</div>

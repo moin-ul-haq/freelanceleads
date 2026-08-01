@@ -429,3 +429,37 @@ class LeaveTeamView(APIView):
             status=status.HTTP_200_OK,
         )
 
+
+
+class NotificationsView(APIView):
+    """GET /api/auth/notifications/ — latest notifications + unread count."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .models import Notification
+
+        qs = Notification.objects.filter(user=request.user)
+        items = [
+            {
+                "id": n.id, "type": n.type, "title": n.title, "body": n.body,
+                "link": n.link, "is_read": n.is_read,
+                "created_at": n.created_at,
+            }
+            for n in qs[:30]
+        ]
+        return Response({
+            "results": items,
+            "unread_count": qs.filter(is_read=False).count(),
+        })
+
+    def post(self, request):
+        """Mark read: {"ids": [..]} or {"all": true}."""
+        from .models import Notification
+
+        qs = Notification.objects.filter(user=request.user, is_read=False)
+        if not request.data.get("all"):
+            ids = request.data.get("ids") or []
+            qs = qs.filter(id__in=ids)
+        updated = qs.update(is_read=True)
+        return Response({"marked_read": updated})

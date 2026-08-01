@@ -147,20 +147,38 @@ def _build_audit_summary(lead) -> dict:
     data["other_issues"] = issues[1:]
     return data
 
-def generate_pitch(lead, tone: str = "professional", sender_name: str = "Alex") -> str:
+def generate_pitch(
+    lead,
+    tone: str = "professional",
+    sender_name: str = "Alex",
+    feedback: str = "",
+    previous_pitch: str = "",
+) -> str:
     tone_label = TONE_LABELS.get(tone, TONE_LABELS["professional"])
     audit_data = _build_audit_summary(lead)
-    
-    user_prompt = json.dumps({
+
+    payload = {
         "lead": audit_data,
         "tone": tone_label,
-        "sender_name": sender_name
-    }, indent=2)
+        "sender_name": sender_name,
+    }
+    user_prompt = json.dumps(payload, indent=2)
+
+    # Re-prompt mode: revise the previous draft per the user's instruction,
+    # keeping every rule of the system prompt intact
+    if feedback.strip() and previous_pitch.strip():
+        user_prompt += (
+            "\n\nPREVIOUS DRAFT:\n" + previous_pitch.strip()
+            + "\n\nREVISION REQUEST from the sender: " + feedback.strip()
+            + "\nRewrite the email applying this request. Keep all rules "
+            "(structure, length, banned phrases, single primary issue)."
+        )
 
     return _clean_copy(complete(
         system_prompt=PITCH_SYSTEM_PROMPT,
         user_prompt=user_prompt,
         temperature=0.7,
+        max_tokens=2000,  # reasoning models think before the (short) answer
     ))
 
 def generate_bulk_pitches(
@@ -243,4 +261,4 @@ def generate_proposal(
         system_prompt=PROPOSAL_SYSTEM_PROMPT,
         user_prompt=user_prompt,
         temperature=0.7,
-    ))
+    ))

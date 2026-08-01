@@ -8,6 +8,7 @@ from .views import (
     TeamMembersView,
     RemoveMemberView,
     LeaveTeamView,
+    NotificationsView,
 )
 from django.urls import path, include
 from rest_framework_simplejwt.views import TokenRefreshView
@@ -26,5 +27,6 @@ urlpatterns = [
     path("team/members/", TeamMembersView.as_view(), name="team-members"),
     path("team/members/<int:seat_id>/", RemoveMemberView.as_view(), name="remove-member"),
     path("team/leave/", LeaveTeamView.as_view(), name="team-leave"),
+    path("notifications/", NotificationsView.as_view(), name="notifications"),
 ]
 

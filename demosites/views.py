@@ -62,6 +62,13 @@ def public_site(request, slug):
                 site=site, name=name, email=email, phone=phone, message=message
             )
             form_sent = True
+            from accounts.models import notify
+            notify(
+                site.user, "inquiry",
+                f"New inquiry on {site.business_name} demo site 📬",
+                f"{name}: {message[:150]}",
+                link=f"/leads/{site.lead_id}",
+            )
         else:
             form_error = "Please fill in your name and a short message."
 

@@ -243,6 +243,23 @@ def poll_imap_replies():
                         if outreach_msg.campaign_lead:
                             outreach_msg.campaign_lead.status = 'replied'
                             outreach_msg.campaign_lead.save()
+
+                        from accounts.models import notify
+                        _lead = outreach_msg.lead or (
+                            outreach_msg.campaign_lead.lead if outreach_msg.campaign_lead else None
+                        )
+                        _owner = (
+                            outreach_msg.campaign_lead.campaign.user if outreach_msg.campaign_lead
+                            else (outreach_msg.email_account.user if outreach_msg.email_account else None)
+                        )
+                        if _owner:
+                            snippet = " ".join(body.split())[:150]
+                            notify(
+                                _owner, "reply",
+                                f"{_lead.name if _lead else msg.get('From')} replied 🎉",
+                                snippet,
+                                link="/outreach",
+                            )
                         break
                         
         except Exception as e:

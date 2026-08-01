@@ -255,6 +255,20 @@ class TrackingPixelView(APIView):
             if not msg.opened_at:
                 msg.opened_at = timezone.now()
                 msg.save(update_fields=["opened_at"])
+                # Notify the owner on first open
+                from accounts.models import notify
+                lead = msg.lead or (msg.campaign_lead.lead if msg.campaign_lead else None)
+                owner = (
+                    msg.campaign_lead.campaign.user if msg.campaign_lead
+                    else (msg.email_account.user if msg.email_account else None)
+                )
+                if owner:
+                    notify(
+                        owner, "open",
+                        f"{lead.name if lead else 'A lead'} opened your email 👀",
+                        f'"{msg.subject}"',
+                        link=f"/leads/{lead.id}" if lead else "/outreach",
+                    )
         except OutreachMessage.DoesNotExist:
             pass
             

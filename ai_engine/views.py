@@ -72,7 +72,13 @@ class GeneratePitchView(APIView):
             )
 
         try:
-            pitch = generate_pitch(lead, tone=tone, sender_name=sender_name)
+            pitch = generate_pitch(
+                lead,
+                tone=tone,
+                sender_name=sender_name,
+                feedback=serializer.validated_data.get("feedback", ""),
+                previous_pitch=serializer.validated_data.get("previous_pitch", ""),
+            )
         except RuntimeError as e:
             return Response({"error": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
 

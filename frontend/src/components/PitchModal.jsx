@@ -22,6 +22,8 @@ export default function PitchModal({ lead, open, onClose }) {
   const [copied, setCopied] = useState(false)
   const [sending, setSending] = useState(false)
   const [sentTo, setSentTo] = useState('')
+  const [feedback, setFeedback] = useState('')
+  const [improving, setImproving] = useState(false)
 
   useEffect(() => {
     if (open) {
@@ -44,6 +46,29 @@ export default function PitchModal({ lead, open, onClose }) {
       setError(errorMessage(err, 'Pitch generation failed'))
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function improve() {
+    if (!feedback.trim()) return
+    setImproving(true)
+    setError('')
+    setSentTo('')
+    try {
+      const body = {
+        lead_id: lead.id,
+        tone,
+        feedback: feedback.trim(),
+        previous_pitch: pitch,
+      }
+      if (senderName.trim()) body.sender_name = senderName.trim()
+      const data = await api.post('/ai/generate-pitch/', body)
+      setPitch(data.pitch)
+      setFeedback('')
+    } catch (err) {
+      setError(errorMessage(err, 'Revision failed'))
+    } finally {
+      setImproving(false)
     }
   }
 
@@ -101,6 +126,20 @@ export default function PitchModal({ lead, open, onClose }) {
               rows={12}
               className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono text-xs text-slate-800"
             />
+            {/* Re-prompt: tell the AI what to change */}
+            <div className="mt-2 flex gap-2">
+              <input
+                value={feedback}
+                onChange={(e) => setFeedback(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); improve() } }}
+                placeholder='Tell the AI what to change… e.g. "make it shorter", "mention we offer free audits"'
+                className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+              />
+              <Button variant="secondary" onClick={improve} disabled={improving || !feedback.trim()}>
+                {improving ? <Spinner className="h-4 w-4" /> : '✨ Improve'}
+              </Button>
+            </div>
+
             <div className="mt-2 flex items-center justify-between gap-2">
               <span className="text-xs text-slate-400">
                 {lead?.email ? `Recipient: ${lead.email}` : 'No email found for this lead — copy the pitch instead.'}

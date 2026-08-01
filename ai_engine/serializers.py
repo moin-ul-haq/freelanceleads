@@ -12,6 +12,9 @@ class GeneratePitchSerializer(serializers.Serializer):
     """POST /api/ai/generate-pitch/"""
 
     lead_id = serializers.IntegerField()
+    # Re-prompt: pass the previous pitch + what to change, get a revision
+    feedback = serializers.CharField(max_length=500, required=False, allow_blank=True, default="")
+    previous_pitch = serializers.CharField(max_length=3000, required=False, allow_blank=True, default="")
     tone = serializers.ChoiceField(
         choices=["professional", "friendly", "direct", "urgent"],
         default="professional",

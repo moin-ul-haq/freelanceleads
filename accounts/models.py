@@ -58,3 +58,38 @@ class TeamSeat(models.Model):
 
     def __str__(self):
         return f"{self.user.email} — {self.team.name} — {self.role}"
+
+
+class Notification(models.Model):
+    """In-app notifications: email opened, reply received, site inquiry, etc."""
+
+    TYPES = (
+        ("open", "Email opened"),
+        ("reply", "Reply received"),
+        ("inquiry", "Demo site inquiry"),
+        ("bounce", "Email bounced"),
+        ("system", "System"),
+    )
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications")
+    type = models.CharField(max_length=12, choices=TYPES, default="system")
+    title = models.CharField(max_length=255)
+    body = models.TextField(blank=True)
+    link = models.CharField(max_length=255, blank=True)  # in-app route, e.g. /outreach
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [models.Index(fields=["user", "is_read"])]
+
+    def __str__(self):
+        return f"[{self.type}] {self.title}"
+
+
+def notify(user, type, title, body="", link=""):
+    """One-liner used by outreach/demosites events. Never raises."""
+    try:
+        Notification.objects.create(user=user, type=type, title=title, body=body[:500], link=link)
+    except Exception:
+        pass
