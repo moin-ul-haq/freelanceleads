@@ -34,6 +34,7 @@ class PlanSerializer(serializers.ModelSerializer):
             "saved_leads_limit",
             "ai_chat_limit",
             "bulk_search_limit",
+            "team_seat_limit",
             "features",
         )
         # stripe_price_id intentionally excluded

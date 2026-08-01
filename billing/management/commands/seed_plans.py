@@ -27,6 +27,7 @@ PLANS = [
         "saved_leads_limit": 20,
         "ai_chat_limit": 10,
         "bulk_search_limit": 0,
+        "team_seat_limit": 1,
     },
     {
         "name": "pro",
@@ -40,6 +41,7 @@ PLANS = [
         "saved_leads_limit": 500,
         "ai_chat_limit": 200,
         "bulk_search_limit": 50,
+        "team_seat_limit": 3,
     },
     {
         "name": "max",
@@ -53,6 +55,7 @@ PLANS = [
         "saved_leads_limit": -1,
         "ai_chat_limit": -1,
         "bulk_search_limit": -1,
+        "team_seat_limit": 10,
     },
 ]
 

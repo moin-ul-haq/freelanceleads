@@ -89,95 +89,205 @@ function PasswordCard() {
   )
 }
 
+const ROLE_STYLES = {
+  owner: 'bg-indigo-100 text-indigo-700',
+  admin: 'bg-sky-100 text-sky-700',
+  member: 'bg-slate-100 text-slate-600',
+}
+
 function TeamCard() {
+  const { user, refreshUser } = useAuth()
   const [team, setTeam] = useState(null)
-  const [members, setMembers] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [seatLimit, setSeatLimit] = useState(null)
   const [name, setName] = useState('')
+  const [renaming, setRenaming] = useState(false)
+  const [newName, setNewName] = useState('')
   const [inviteEmail, setInviteEmail] = useState('')
+  const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState({})
 
   function load() {
     api.get('/auth/team/')
-      .then((t) => {
-        setTeam(t)
-        if (t) api.get('/auth/team/members/').then((m) => setMembers(Array.isArray(m) ? m : m.results || [])).catch(() => {})
-      })
+      .then((t) => setTeam(t))
       .catch(() => setTeam(null))
+      .finally(() => setLoading(false))
   }
-  useEffect(load, [])
 
-  async function createTeam(e) {
+  useEffect(() => {
+    load()
+    // seat limit comes from the owner's plan
+    api.get('/billing/plans/')
+      .then((plans) => {
+        const mine = (Array.isArray(plans) ? plans : []).find((p) => p.name === (user?.plan || 'free'))
+        if (mine && mine.team_seat_limit !== undefined) setSeatLimit(mine.team_seat_limit)
+      })
+      .catch(() => {})
+  }, [user?.plan])
+
+  const seats = team?.seats || []
+  const mySeat = seats.find((s) => s.user?.id === user?.id)
+  const canManage = mySeat && ['owner', 'admin'].includes(mySeat.role)
+  const isOwner = mySeat?.role === 'owner'
+  const seatsUsed = team?.seat_count ?? seats.length
+  const limitLabel = seatLimit == null ? '' : seatLimit === -1 ? ' / ∞' : ` / ${seatLimit}`
+  const seatsFull = seatLimit != null && seatLimit !== -1 && seatsUsed >= seatLimit
+
+  async function run(fn, okMsg) {
+    setBusy(true)
+    setMsg({})
+    try {
+      await fn()
+      if (okMsg) setMsg({ ok: okMsg })
+      load()
+      refreshUser?.()
+    } catch (err) {
+      setMsg({ err: errorMessage(err) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const createTeam = (e) => { e.preventDefault(); run(() => api.post('/auth/team/', { name }), 'Team created — you are the owner.') }
+  const rename = (e) => {
     e.preventDefault()
-    setMsg({})
-    try {
-      await api.post('/auth/team/', { name })
-      setMsg({ ok: 'Team created.' })
-      load()
-    } catch (err) {
-      setMsg({ err: errorMessage(err) })
-    }
+    run(async () => { await api.patch('/auth/team/', { name: newName }); setRenaming(false) }, 'Team renamed.')
   }
-
-  async function invite(e) {
+  const invite = (e) => {
     e.preventDefault()
-    setMsg({})
-    try {
-      await api.post('/auth/team/invite/', { email: inviteEmail })
-      setInviteEmail('')
-      setMsg({ ok: 'Member invited.' })
-      load()
-    } catch (err) {
-      setMsg({ err: errorMessage(err) })
-    }
+    run(async () => { await api.post('/auth/team/invite/', { email: inviteEmail }); setInviteEmail('') }, 'Member added to the team.')
   }
-
-  async function removeMember(seatId) {
-    setMsg({})
-    try {
-      await api.del(`/auth/team/members/${seatId}/`)
-      load()
-    } catch (err) {
-      setMsg({ err: errorMessage(err) })
-    }
+  const removeMember = (seat) => {
+    if (!window.confirm(`Remove ${seat.user?.email} from the team?`)) return
+    run(() => api.del(`/auth/team/members/${seat.id}/`), 'Member removed.')
+  }
+  const leaveTeam = () => {
+    if (!window.confirm('Leave this team? You will go back to your own free quota.')) return
+    run(() => api.post('/auth/team/leave/'), 'You left the team.')
+  }
+  const disband = () => {
+    if (!window.confirm('Disband the team? All members lose access to the shared quota pool. This cannot be undone.')) return
+    run(() => api.del('/auth/team/'), 'Team disbanded.')
   }
 
   return (
     <Card className="p-5 lg:col-span-2">
-      <h2 className="mb-4 text-base font-semibold text-slate-900">Team</h2>
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="text-base font-semibold text-slate-900">Team</h2>
+        {team && (
+          <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${seatsFull ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
+            {seatsUsed}{limitLabel} seats
+          </span>
+        )}
+      </div>
       <Alert>{msg.err}</Alert>
       <Alert kind="success">{msg.ok}</Alert>
 
-      {!team ? (
-        <form onSubmit={createTeam} className="mt-2 flex max-w-md items-end gap-2">
-          <div className="flex-1">
-            <Input label="Team name" value={name} onChange={(e) => setName(e.target.value)} required placeholder="My agency" />
-          </div>
-          <Button type="submit">Create team</Button>
-        </form>
-      ) : (
-        <div className="mt-2 space-y-4">
-          <p className="text-sm text-slate-600">
-            Team: <strong className="text-slate-900">{team.name}</strong>
-            <span className="ml-2 text-xs text-slate-400">Team members share the owner's quota pool.</span>
+      {loading ? (
+        <p className="text-sm text-slate-400">Loading…</p>
+      ) : !team ? (
+        <div className="mt-1 space-y-4">
+          <p className="max-w-xl text-sm text-slate-500">
+            Create a team to work with others — teammates share your plan's quota pool
+            (searches, AI pitches, email sends) and see their own leads and pipelines.
+            Seat limits depend on your plan.
           </p>
-
-          <div className="space-y-1.5">
-            {members.map((m) => (
-              <div key={m.id} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 text-sm">
-                <span>{m.user_email || m.email || m.user?.email || m.user} <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">{m.role}</span></span>
-                {m.role !== 'owner' && (
-                  <button onClick={() => removeMember(m.id)} className="text-xs text-slate-400 hover:text-red-600">Remove</button>
+          <form onSubmit={createTeam} className="flex max-w-md items-end gap-2">
+            <div className="flex-1">
+              <Input label="Team name" value={name} onChange={(e) => setName(e.target.value)} required placeholder="My agency" />
+            </div>
+            <Button type="submit" disabled={busy}>Create team</Button>
+          </form>
+        </div>
+      ) : (
+        <div className="mt-1 space-y-5">
+          {/* name + rename */}
+          <div className="flex flex-wrap items-center gap-3">
+            {renaming ? (
+              <form onSubmit={rename} className="flex items-end gap-2">
+                <Input value={newName} onChange={(e) => setNewName(e.target.value)} required className="!py-1.5" />
+                <Button type="submit" disabled={busy} className="!py-1.5">Save</Button>
+                <Button type="button" variant="ghost" className="!py-1.5" onClick={() => setRenaming(false)}>Cancel</Button>
+              </form>
+            ) : (
+              <>
+                <span className="text-lg font-bold text-slate-900">{team.name}</span>
+                {isOwner && (
+                  <button onClick={() => { setNewName(team.name); setRenaming(true) }} className="text-xs text-slate-400 underline hover:text-indigo-600">
+                    rename
+                  </button>
                 )}
+              </>
+            )}
+            <span className="text-xs text-slate-400">
+              Members share the owner's quota pool ({user?.plan || 'free'} plan).
+            </span>
+          </div>
+
+          {/* members */}
+          <div className="space-y-1.5">
+            {seats.map((s) => (
+              <div key={s.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2.5 text-sm">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-sm font-bold uppercase text-indigo-600">
+                    {(s.user?.username || s.user?.email || '?')[0]}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-slate-900">
+                      {s.user?.username}
+                      {s.user?.id === user?.id && <span className="ml-1.5 text-xs font-normal text-slate-400">(you)</span>}
+                    </p>
+                    <p className="truncate text-xs text-slate-400">{s.user?.email}</p>
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-3">
+                  {s.joined_at && <span className="hidden text-xs text-slate-400 sm:inline">joined {String(s.joined_at).slice(0, 10)}</span>}
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${ROLE_STYLES[s.role] || ROLE_STYLES.member}`}>
+                    {s.role}
+                  </span>
+                  {canManage && s.role !== 'owner' && s.user?.id !== user?.id && (
+                    <button onClick={() => removeMember(s)} disabled={busy} className="text-xs text-slate-400 hover:text-red-600">
+                      Remove
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
 
-          <form onSubmit={invite} className="flex max-w-md items-end gap-2">
-            <div className="flex-1">
-              <Input label="Invite by email" type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} required placeholder="teammate@example.com" />
+          {/* invite */}
+          {canManage && (
+            <div>
+              <form onSubmit={invite} className="flex max-w-md items-end gap-2">
+                <div className="flex-1">
+                  <Input
+                    label="Add member by email"
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    required
+                    placeholder="teammate@example.com"
+                    disabled={seatsFull}
+                  />
+                </div>
+                <Button type="submit" disabled={busy || seatsFull}>Add</Button>
+              </form>
+              <p className="mt-1 text-xs text-slate-400">
+                {seatsFull
+                  ? 'All seats are used — upgrade your plan for more seats.'
+                  : 'They must already have a FreelanceLeads account with this email.'}
+              </p>
             </div>
-            <Button type="submit">Invite</Button>
-          </form>
+          )}
+
+          {/* danger zone */}
+          <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4">
+            {isOwner ? (
+              <Button variant="danger" onClick={disband} disabled={busy}>Disband team</Button>
+            ) : (
+              <Button variant="secondary" onClick={leaveTeam} disabled={busy}>Leave team</Button>
+            )}
+          </div>
         </div>
       )}
     </Card>
