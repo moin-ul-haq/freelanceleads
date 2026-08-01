@@ -267,10 +267,19 @@ class ChatView(APIView):
         messages.append({"role": "user", "content": message})
 
         try:
-            # Enforce hard limit on output tokens to prevent long essays
-            reply = ai_chat(messages=messages, max_tokens=900)  # reasoning models spend tokens thinking before the (short) answer
-        except RuntimeError as e:
-            return Response({"error": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+            # Tool-calling: the assistant can query the user's real data
+            # (leads, campaigns, pipeline, inbox, sites) before answering.
+            from services.ai import chat_with_tools
+            from .tools import TOOLS, execute_tool
+
+            reply = chat_with_tools(
+                messages=messages,
+                tools=TOOLS,
+                tool_executor=lambda name, args: execute_tool(request.user, name, args),
+                max_tokens=900,  # reasoning models think before the (short) answer
+            )
+        except Exception as e:
+            return Response({"error": f"AI API error: {e}"}, status=status.HTTP_502_BAD_GATEWAY)
 
         from services.ai import clean_typography
         reply = clean_typography(reply)

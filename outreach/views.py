@@ -457,6 +457,19 @@ class SendEmailView(APIView):
         except PermissionDenied as e:
             return Response(e.detail, status=status.HTTP_403_FORBIDDEN)
 
+        # Respect the account's daily cap (shared with campaign sends)
+        from datetime import timedelta
+        day_ago = timezone.now() - timedelta(hours=24)
+        sent_today = OutreachMessage.objects.filter(
+            campaign_lead__campaign__email_account=account,
+            sent_at__gte=day_ago,
+        ).count()
+        if sent_today >= (account.daily_send_limit or 40):
+            return Response(
+                {"error": f"Daily send limit ({account.daily_send_limit}) reached for {account.email_address}. Try again tomorrow — this protects your sender reputation."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
         try:
             send_email_via_account(account, lead.email, subject, body)
         except Exception as e:

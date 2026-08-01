@@ -11,6 +11,9 @@ class EmailAccount(models.Model):
     ]
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='email_accounts')
     email_address = models.EmailField(unique=True)
+    # Cold-email safety: max sends per rolling day from this account.
+    # 30-50 is the accepted safe range for a warmed inbox.
+    daily_send_limit = models.PositiveIntegerField(default=40)
     provider = models.CharField(max_length=50, choices=PROVIDER_CHOICES)
     
     # OAuth Tokens (Encrypted)

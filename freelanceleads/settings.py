@@ -218,6 +218,10 @@ SERP_API_KEY = os.environ.get("SERP_API_KEY")
 # Google PageSpeed Insights (free API — key optional but recommended for quota)
 PAGESPEED_API_KEY = os.environ.get("PAGESPEED_API_KEY")
 
+# Reoon email verifier — primary deliverability check when set
+# (falls back to the built-in SMTP probe when missing or erroring)
+REOON_API_KEY = os.environ.get("REOON_API_KEY")
+
 # celery configuration
 if REDIS_URL:
     CELERY_RESULT_BACKEND = REDIS_URL

@@ -2,7 +2,7 @@ from django.db import models
 from django.conf import settings
 
 
-PLAN_CHOICES = [("free", "Free"), ("pro", "Pro"), ("max", "Max")]
+PLAN_CHOICES = [("free", "Free"), ("pro", "Pro"), ("max", "Max"), ("unlimited", "Unlimited")]
 
 
 class Plan(models.Model):
@@ -21,6 +21,9 @@ class Plan(models.Model):
     ai_chat_limit = models.IntegerField(default=0)
     bulk_search_limit = models.IntegerField(default=0)
     team_seat_limit = models.IntegerField(default=1)  # Free=1, Pro=1, Max=3
+
+    # Hidden plans (e.g. "unlimited") are assignable only via the admin
+    is_public = models.BooleanField(default=True)
 
     def __str__(self):
         return f"{self.name} — ${self.price_usd}"

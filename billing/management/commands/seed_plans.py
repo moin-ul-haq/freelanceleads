@@ -57,6 +57,22 @@ PLANS = [
         "bulk_search_limit": -1,
         "team_seat_limit": 10,
     },
+    {
+        # Hidden plan — never listed publicly; assign from the admin panel
+        # (User admin → "Grant unlimited plan" action)
+        "name": "unlimited",
+        "price_usd": 0.00,
+        "stripe_price_id": "",
+        "search_limit": -1,
+        "backlink_search_limit": -1,
+        "ai_pitch_limit": -1,
+        "email_send_limit": -1,
+        "saved_leads_limit": -1,
+        "ai_chat_limit": -1,
+        "bulk_search_limit": -1,
+        "team_seat_limit": -1,
+        "is_public": False,
+    },
 ]
 
 

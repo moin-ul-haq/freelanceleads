@@ -55,9 +55,27 @@ def process_outreach_campaigns():
         'campaign', 'campaign__email_account', 'lead'
     ).prefetch_related('campaign__steps')
     
+    from datetime import timedelta as _td
+
+    day_ago = now - _td(hours=24)
+    sent_today = {}  # account_id -> count, computed lazily
+
+    def _account_sent_today(acc):
+        if acc.id not in sent_today:
+            sent_today[acc.id] = OutreachMessage.objects.filter(
+                campaign_lead__campaign__email_account=acc,
+                sent_at__gte=day_ago,
+            ).count()
+        return sent_today[acc.id]
+
     for cl in active_leads:
         account = cl.campaign.email_account
         if not account or not cl.lead.email:
+            continue
+
+        # Per-account daily cap — protects the sender's reputation
+        if _account_sent_today(account) >= (account.daily_send_limit or 40):
+            logger.info("Daily send cap reached for %s, deferring.", account.email_address)
             continue
 
         step = cl.campaign.steps.filter(step_order=cl.current_step).first()
@@ -115,6 +133,7 @@ def process_outreach_campaigns():
 
             # Increment email_send quota after successful send
             increment(cl.campaign.user, 'email_send')
+            sent_today[account.id] = sent_today.get(account.id, 0) + 1
             
             cl.current_step += 1
             next_step = cl.campaign.steps.filter(step_order=cl.current_step).first()

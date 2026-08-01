@@ -23,6 +23,7 @@ import socket
 import uuid
 
 import dns.resolver
+import requests
 from django.conf import settings
 
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
@@ -52,11 +53,68 @@ def _rcpt_code(server: smtplib.SMTP, address: str) -> int:
     return code
 
 
+# Reoon → our status vocabulary. "safe" is Reoon's power-mode top verdict.
+REOON_STATUS_MAP = {
+    "safe": STATUS_DELIVERABLE,
+    "valid": STATUS_DELIVERABLE,
+    "invalid": STATUS_UNDELIVERABLE,
+    "disabled": STATUS_UNDELIVERABLE,
+    "disposable": STATUS_UNDELIVERABLE,
+    "spamtrap": STATUS_UNDELIVERABLE,
+    "catch_all": STATUS_RISKY,
+    "role_account": STATUS_RISKY,
+    "role": STATUS_RISKY,
+    "inbox_full": STATUS_RISKY,
+    "unknown": STATUS_UNKNOWN,
+}
+
+
+def _verify_via_reoon(email: str) -> str | None:
+    """
+    Reoon Email Verifier (QUICK mode — instant, no credits for known domains).
+    Returns a STATUS_* string, or None so the caller falls back to SMTP.
+    """
+    if not settings.REOON_API_KEY:
+        return None
+    try:
+        resp = requests.get(
+            "https://emailverifier.reoon.com/api/v1/verify",
+            params={"email": email, "key": settings.REOON_API_KEY, "mode": "quick"},
+            timeout=20,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        status = (data.get("status") or "").lower()
+        if status in REOON_STATUS_MAP:
+            return REOON_STATUS_MAP[status]
+        # Reoon quick mode sometimes reports valid_syntax/mx details instead
+        if data.get("is_deliverable") is True:
+            return STATUS_DELIVERABLE
+        if data.get("is_deliverable") is False:
+            return STATUS_UNDELIVERABLE
+        return None
+    except Exception:
+        return None  # API down / bad key / rate limit → SMTP fallback
+
+
 def verify_email(email: str) -> str:
-    """Returns one of the STATUS_* strings for a single address."""
+    """
+    Returns one of the STATUS_* strings for a single address.
+    Order: Reoon API (when configured) → built-in SMTP probe fallback.
+    """
     email = (email or "").strip().lower()
     if not EMAIL_RE.match(email):
         return STATUS_UNDELIVERABLE
+
+    reoon = _verify_via_reoon(email)
+    if reoon is not None:
+        return reoon
+
+    return _verify_via_smtp(email)
+
+
+def _verify_via_smtp(email: str) -> str:
+    """The original free MX + SMTP RCPT probe with catch-all detection."""
 
     domain = email.rsplit("@", 1)[1]
     hosts = _mx_hosts(domain)

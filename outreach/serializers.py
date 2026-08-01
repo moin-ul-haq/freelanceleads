@@ -5,7 +5,7 @@ from leads.models import Lead
 class EmailAccountSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmailAccount
-        fields = ['id', 'email_address', 'provider', 'smtp_host', 'smtp_port', 'smtp_username', 'imap_host', 'imap_port', 'imap_username', 'created_at']
+        fields = ['id', 'email_address', 'provider', 'daily_send_limit', 'smtp_host', 'smtp_port', 'smtp_username', 'imap_host', 'imap_port', 'imap_username', 'created_at']
         read_only_fields = ['user', 'created_at']
 
 class CampaignStepSerializer(serializers.ModelSerializer):

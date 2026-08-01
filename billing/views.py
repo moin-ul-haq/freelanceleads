@@ -70,7 +70,7 @@ def _get_subscription(user):
 
 
 class PlanListView(ListAPIView):
-    queryset = Plan.objects.all()
+    queryset = Plan.objects.filter(is_public=True)
     serializer_class = PlanSerializer
     permission_classes = [AllowAny]
 

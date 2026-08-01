@@ -165,3 +165,74 @@ def complete_json(
         return response.choices[0].message.content.strip()
     except Exception as e:
         raise RuntimeError(f"AI API error: {e}")
+
+
+def chat_with_tools(
+    messages: list[dict],
+    tools: list[dict],
+    tool_executor,
+    temperature: float = 0.6,
+    max_tokens: int = 900,
+    max_rounds: int = 4,
+) -> str:
+    """
+    Multi-turn completion with function calling. The model may request tool
+    calls; `tool_executor(name, args) -> str|dict` runs them and the results
+    are fed back until the model produces a final text answer.
+    """
+    import json as _json
+
+    client = _get_client()
+    model = _get_model()
+    msgs = list(messages)
+
+    for _ in range(max_rounds):
+        response = client.chat.completions.create(
+            model=model,
+            messages=msgs,
+            tools=tools,
+            tool_choice="auto",
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        msg = response.choices[0].message
+
+        if not msg.tool_calls:
+            return (msg.content or "").strip()
+
+        msgs.append({
+            "role": "assistant",
+            "content": msg.content or "",
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in msg.tool_calls
+            ],
+        })
+
+        for tc in msg.tool_calls:
+            try:
+                args = _json.loads(tc.function.arguments or "{}")
+            except Exception:
+                args = {}
+            try:
+                result = tool_executor(tc.function.name, args)
+            except Exception as e:
+                result = f"tool error: {e}"
+            msgs.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": result if isinstance(result, str) else _json.dumps(result, default=str),
+            })
+
+    # Tool budget exhausted — force a final answer from what was gathered
+    response = client.chat.completions.create(
+        model=model, messages=msgs, temperature=temperature, max_tokens=max_tokens
+    )
+    return (response.choices[0].message.content or "").strip()

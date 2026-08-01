@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { errorMessage } from '../api/client'
-import { Button, Input, Alert } from '../components/ui'
-import { AuthShell } from './Login'
+import { Button, Alert } from '../components/ui'
+import { AuthShell, AuthInput, PasswordInput } from './Login'
 
 export default function Register() {
   const { register } = useAuth()
@@ -12,7 +12,7 @@ export default function Register() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
+  const set = (k) => (v) => setForm((f) => ({ ...f, [k]: v }))
 
   async function submit(e) {
     e.preventDefault()
@@ -30,20 +30,46 @@ export default function Register() {
   }
 
   return (
-    <AuthShell title="Create your account" subtitle="Start finding local business clients today">
+    <AuthShell
+      title="Create your account"
+      subtitle="Free plan included — no credit card needed."
+    >
       <form onSubmit={submit} className="space-y-4">
         <Alert>{error}</Alert>
         <div className="grid grid-cols-2 gap-3">
-          <Input label="First name" value={form.first_name} onChange={set('first_name')} required autoFocus />
-          <Input label="Last name (optional)" value={form.last_name} onChange={set('last_name')} />
+          <AuthInput label="First name" value={form.first_name} onChange={set('first_name')} autoFocus autoComplete="given-name" placeholder="Moin" />
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-slate-700">Last name <span className="text-slate-400">(optional)</span></span>
+            <input
+              className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 transition focus:border-indigo-500 focus:outline-none focus:ring-4 focus:ring-indigo-50"
+              value={form.last_name}
+              onChange={(e) => set('last_name')(e.target.value)}
+              autoComplete="family-name"
+            />
+          </label>
         </div>
-        <Input label="Email" type="email" value={form.email} onChange={set('email')} required />
-        <Input label="Password" type="password" value={form.password} onChange={set('password')} required minLength={8} />
-        <Input label="Confirm password" type="password" value={form.password2} onChange={set('password2')} required />
-        <Button type="submit" disabled={busy} className="w-full">{busy ? 'Creating…' : 'Create account'}</Button>
+        <AuthInput label="Work email" type="email" value={form.email} onChange={set('email')} autoComplete="email" placeholder="you@company.com" />
+        <PasswordInput
+          label="Password"
+          value={form.password}
+          onChange={set('password')}
+          autoComplete="new-password"
+          minLength={8}
+          hint="At least 8 characters, not entirely numeric."
+        />
+        <PasswordInput label="Confirm password" value={form.password2} onChange={set('password2')} autoComplete="new-password" />
+        <Button type="submit" disabled={busy} className="w-full !py-2.5">
+          {busy ? 'Creating account…' : 'Create free account →'}
+        </Button>
+        <p className="text-center text-xs leading-relaxed text-slate-400">
+          By creating an account you agree to our{' '}
+          <Link to="/terms" className="text-indigo-600 hover:underline">Terms of Service</Link> and{' '}
+          <Link to="/privacy" className="text-indigo-600 hover:underline">Privacy Policy</Link>.
+        </p>
       </form>
-      <p className="mt-4 text-center text-sm text-slate-500">
-        Already registered? <Link to="/login" className="font-medium text-indigo-600 hover:underline">Sign in</Link>
+      <p className="mt-6 text-center text-sm text-slate-500">
+        Already have an account?{' '}
+        <Link to="/login" className="font-semibold text-indigo-600 hover:underline">Sign in</Link>
       </p>
     </AuthShell>
   )
