@@ -12,6 +12,13 @@ def health(request):
     return JsonResponse({"status": "ok"})
 
 
+# ── Admin branding + stats dashboard ────────────────────────
+admin.site.site_header = "FreelanceLeads Administration"
+admin.site.site_title = "FreelanceLeads Admin"
+admin.site.index_title = "Manage the platform"
+admin.site.index_template = "admin/fl_index.html"
+
+
 from demosites.views import public_site
 
 urlpatterns = [

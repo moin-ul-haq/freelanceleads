@@ -13,11 +13,29 @@ export default function Assistant() {
   const [input, setInput] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [loaded, setLoaded] = useState(false)
   const bottomRef = useRef(null)
+
+  // Conversation is persisted server-side — restore it on mount
+  useEffect(() => {
+    api.get('/ai/chat/history/')
+      .then((d) => setHistory(d.history || []))
+      .catch(() => {})
+      .finally(() => setLoaded(true))
+  }, [])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [history, busy])
+
+  async function newConversation() {
+    try {
+      await api.del('/ai/chat/history/')
+      setHistory([])
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
 
   async function send(text) {
     const message = (text ?? input).trim()
@@ -27,7 +45,7 @@ export default function Assistant() {
     setBusy(true)
     setHistory((h) => [...h, { role: 'user', content: message }])
     try {
-      const data = await api.post('/ai/chat/', { message, history })
+      const data = await api.post('/ai/chat/', { message })
       setHistory(data.history)
     } catch (err) {
       setError(errorMessage(err, 'Chat failed'))
@@ -45,7 +63,7 @@ export default function Assistant() {
         subtitle="Your freelance sales coach — pitches, pricing, objection handling."
       >
         {history.length > 0 && (
-          <Button variant="secondary" onClick={() => setHistory([])}>New conversation</Button>
+          <Button variant="secondary" onClick={newConversation}>New conversation</Button>
         )}
       </PageHeader>
 

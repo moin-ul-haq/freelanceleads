@@ -1,0 +1,9 @@
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;margin:4px 0 22px;">
+  {% for title, value, hint in boxes %}
+  <div style="background:var(--darkened-bg,#f8f8f8);border:1px solid var(--hairline-color,#e8e8e8);border-radius:10px;padding:14px 16px;">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--body-quiet-color,#666);">{{ title }}</div>
+    <div style="font-size:24px;font-weight:700;margin-top:2px;">{{ value }}</div>
+    {% if hint %}<div style="font-size:11px;color:var(--body-quiet-color,#888);margin-top:2px;">{{ hint }}</div>{% endif %}
+  </div>
+  {% endfor %}
+</div>

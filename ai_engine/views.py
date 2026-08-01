@@ -229,6 +229,11 @@ class ChatView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        import json as _json
+
+        from .context import build_user_snapshot
+        from .models import ChatMessage
+
         serializer = ChatSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -237,29 +242,47 @@ class ChatView(APIView):
         check(request.user, "ai_chat")
 
         message = serializer.validated_data["message"]
-        history = serializer.validated_data["history"]
 
-        # Build full message list for OpenAI
-        messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+        # Server-side history is the source of truth (survives refreshes/devices)
+        stored = list(
+            ChatMessage.objects.filter(user=request.user)
+            .order_by("-created_at")[:12]
+        )[::-1]
 
-        # Add conversation history (truncate to last 6 messages to save tokens)
-        for msg in history[-6:]:
-            messages.append({"role": msg["role"], "content": msg["content"]})
+        # Ground the assistant in the user's real account data
+        try:
+            snapshot = build_user_snapshot(request.user)
+        except Exception:
+            snapshot = {}
 
-        # Add current user message
+        messages = [
+            {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+            {
+                "role": "system",
+                "content": "ACCOUNT SNAPSHOT (live data):\n" + _json.dumps(snapshot),
+            },
+        ]
+        for msg in stored:
+            messages.append({"role": msg.role, "content": msg.content})
         messages.append({"role": "user", "content": message})
 
         try:
             # Enforce hard limit on output tokens to prevent long essays
-            reply = ai_chat(messages=messages, max_tokens=200)
+            reply = ai_chat(messages=messages, max_tokens=900)  # reasoning models spend tokens thinking before the (short) answer
         except RuntimeError as e:
             return Response({"error": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
 
-        # Increment quota
-        increment(request.user, "ai_chat")
+        from services.ai import clean_typography
+        reply = clean_typography(reply)
 
-        # Return updated history so frontend can store it
-        updated_history = list(history) + [
+        # Increment quota + persist the exchange
+        increment(request.user, "ai_chat")
+        ChatMessage.objects.create(user=request.user, role="user", content=message)
+        ChatMessage.objects.create(user=request.user, role="assistant", content=reply)
+
+        updated_history = [
+            {"role": m.role, "content": m.content} for m in stored
+        ] + [
             {"role": "user", "content": message},
             {"role": "assistant", "content": reply},
         ]
@@ -271,6 +294,29 @@ class ChatView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class ChatHistoryView(APIView):
+    """
+    GET    /api/ai/chat/history/ — persisted conversation (oldest first)
+    DELETE /api/ai/chat/history/ — start a fresh conversation
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .models import ChatMessage
+
+        messages = ChatMessage.objects.filter(user=request.user).order_by("created_at")
+        return Response({
+            "history": [{"role": m.role, "content": m.content} for m in messages[:200]]
+        })
+
+    def delete(self, request):
+        from .models import ChatMessage
+
+        ChatMessage.objects.filter(user=request.user).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # ─────────────────────────────────────────────────────────────
